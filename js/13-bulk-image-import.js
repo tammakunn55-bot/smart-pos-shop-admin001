@@ -1,3 +1,37 @@
+/* Smart POS — legacy JSON + image bulk import
+ * Includes a small modal controller because the current v3 UI no longer exposes
+ * openModal()/closeModal() globally. This keeps the legacy quick-import card
+ * self-contained and does not touch product/stock logic.
+ */
+(function () {
+  if (typeof window.openModal !== 'function') {
+    window.openModal = function (id) {
+      const el = document.getElementById(id);
+      if (!el) {
+        console.warn('[SmartPOS] modal not found:', id);
+        return false;
+      }
+      el.classList.remove('hidden');
+      el.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('overflow-hidden');
+      return true;
+    };
+  }
+
+  if (typeof window.closeModal !== 'function') {
+    window.closeModal = function (id) {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      el.classList.add('hidden');
+      el.setAttribute('aria-hidden', 'true');
+      if (!document.querySelector('.fixed.inset-0:not(.hidden)[id^=\"modal-\"]')) {
+        document.body.classList.remove('overflow-hidden');
+      }
+      return true;
+    };
+  }
+})();
+
 /* Bulk image import tool — uploads many product images to Supabase Storage in one go
        and attaches each to the matching product by name, instead of one-by-one manually. */
     window.startBulkImageImport = async function () {
