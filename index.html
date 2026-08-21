@@ -323,9 +323,6 @@ body{
     padding-right:1rem;
   }
   #btn-confirm-import,
-  #btn-confirm-import-with-images{
-    min-height:52px!important;
-  }
   #bottom-nav .nav-btn-el{
     min-height:3.45rem!important;
     margin-top:2px;
@@ -438,6 +435,34 @@ body{
           </div>
 <button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">✅ สร้างบัญชีและเริ่มทดสอบโปรแกรม</button>
 <p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">สร้างบัญชีเพื่อทดสอบได้โดยไม่ต้องมีฐานข้อมูลก่อน เมื่อพร้อมใช้งานจริงค่อยเชื่อมต่อ Supabase ของร้านตัวเอง<br/>ใช้เฉพาะ <b>anon public key</b> ห้ามใส่ service_role/secret key</p>
+<button class="w-full text-center text-[11px] text-indigo-300 underline mt-4 btn-touch" onclick="document.getElementById('setup-fresh-fields').classList.add('hidden'); document.getElementById('setup-join-fields').classList.remove('hidden');" type="button">มีร้านอยู่แล้ว? เชื่อมต่อเครื่องนี้เข้ากับฐานข้อมูลร้านเดิม</button>
+</div>
+<!-- โหมด "เชื่อมต่อร้านที่มีอยู่แล้ว" สำหรับติดตั้งบนเครื่องที่สอง/เครื่องพนักงาน โดยดึงข้อมูล
+             ร้านจริงจากคลาวด์มาใช้ แทนที่จะสร้างร้านใหม่ว่างๆ ทับ -->
+<div class="space-y-3 hidden" id="setup-join-fields">
+<div class="bg-teal-500/10 border border-teal-400/20 rounded-xl p-3 text-[10px] text-teal-200 leading-relaxed mb-1">
+            ใช้โหมดนี้เมื่อร้านมีบัญชี Supabase อยู่แล้ว (ตั้งค่าไว้จากเครื่องแรก) และต้องการให้เครื่องนี้ดึงข้อมูลร้านเดิมมาใช้ — กรอกข้อมูล Supabase และอีเมล/รหัสผ่านของ <b>เจ้าของร้าน (owner)</b> เท่านั้น
+          </div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
+<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-url" placeholder="https://xxxxx.supabase.co" type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">anon public key</label>
+<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-key" placeholder="eyJhbGciOi..." type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">อีเมลของเจ้าของร้าน (owner)</label>
+<input autocomplete="username" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-email" placeholder="owner@example.com" type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่าน Supabase ของเจ้าของร้าน</label>
+<input autocomplete="current-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-password" placeholder="รหัสผ่านที่ตั้งไว้ตอนเชื่อมต่อ Supabase ครั้งแรก" type="password"/>
+</div>
+<div class="hidden text-[11px] text-red-400 font-bold text-center" id="setup-join-error"></div>
+<button class="w-full py-4 bg-teal-600 hover:bg-teal-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeJoinExistingAccount()">🔗 ดึงข้อมูลร้านเดิมมาที่เครื่องนี้</button>
+<p class="text-[10px] text-slate-500 text-center mt-1 leading-relaxed">หลังเชื่อมต่อสำเร็จ เครื่องนี้จะล็อกอินด้วย User ID/รหัสผ่าน (PIN) ของพนักงานแต่ละคนตามปกติ ไม่ใช่อีเมลนี้ — อีเมล/รหัสผ่านนี้ใช้ยืนยันเจ้าของร้านเพื่อผูกเครื่องเข้ากับฐานข้อมูลร้านเดิม และระบบจะไม่เก็บรหัสผ่าน</p>
+<button class="w-full text-center text-[11px] text-slate-400 underline btn-touch" onclick="document.getElementById('setup-join-fields').classList.add('hidden'); document.getElementById('setup-fresh-fields').classList.remove('hidden');" type="button">← กลับไปสร้างร้านใหม่แทน</button>
 </div>
 </div>
 </div>
@@ -1674,13 +1699,10 @@ body{
 <p class="text-xs font-bold text-slate-700">คลิกอัปโหลดไฟล์ Excel (.xlsx) หรือ CSV (.csv)</p>
 <input accept=".xlsx, .csv" class="hidden" id="import-file-uploader" onchange="window.handleBulkFileUpload(event)" type="file"/>
 </div>
-<div class="border-2 border-dashed rounded-2xl p-4 flex flex-col items-center justify-center text-center bg-emerald-50/60 border-emerald-200">
-  <span class="text-3xl mb-1">🖼️</span>
-  <p class="text-xs font-bold text-slate-700">รูปสินค้า (เลือกหลายไฟล์ได้)</p>
-  <p class="text-[10px] text-slate-500 mb-2">ชื่อไฟล์ต้องตรงกับคอลัมน์ "ไฟล์รูปสินค้า" ใน Excel</p>
-  <input accept="image/*" class="w-full text-[10px] border rounded-xl p-2 bg-white text-slate-800" id="import-image-files-uploader" multiple type="file" onchange="window.prepareIntegratedProductImageImport()"/>
-  <span class="text-[10px] font-bold text-emerald-700 mt-1" id="import-image-file-count">ยังไม่ได้เลือกรูป</span>
-  <p class="text-[9px] text-slate-500 mt-1">1) เลือก Excel → 2) กดวิเคราะห์ → 3) ตรวจรายการ → 4) กด “นำเข้าสินค้า + รูป”</p>
+<div class="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center text-center bg-indigo-50 border-indigo-200 cursor-pointer" onclick="window.openModal('modal-bulk-image')">
+  <span class="text-4xl mb-2">🖼️</span>
+  <p class="text-xs font-bold text-slate-700">นำเข้ารูปสินค้าแบบเก่า (JSON + รูป)</p>
+  <p class="text-[10px] text-slate-500">ใช้ image_mapping.json จับคู่ชื่อสินค้าและชื่อไฟล์รูป</p>
 </div>
 <div class="flex flex-col">
 <textarea class="w-full flex-1 p-3 border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" id="command-input" placeholder="หรือวางข้อความคั่นด้วยลูกน้ำ (CSV) ที่นี่... (รองรับเฉพาะขนาดหลัก ถ้าต้องการนำเข้าตัวเลือกแบ่งขายด้วย ให้ใช้วิธีอัปโหลดไฟล์ Excel/CSV ทางซ้ายแทน)
@@ -1705,17 +1727,51 @@ body{
 <div class="relative flex-1 min-h-[250px] bg-slate-50 rounded-2xl overflow-auto border border-slate-200">
 <div class="w-full text-xs" id="import-preview-area"></div>
 </div>
-<div class="hidden mt-3" id="integrated-image-progress">
-  <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden"><div id="integrated-image-bar" class="bg-violet-600 h-2 rounded-full" style="width:0%"></div></div>
-  <pre id="integrated-image-log" class="hidden mt-2 text-[9px] bg-slate-50 border rounded-xl p-2 max-h-28 overflow-auto whitespace-pre-wrap text-slate-600"></pre>
-</div>
 <div class="sticky bottom-0 z-20 flex gap-2 mt-6 border-t pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur">
 <button class="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-bold btn-touch text-xs" onclick="window.closeModal('modal-command')">ยกเลิก</button>
 <button class="flex-1 py-3.5 bg-emerald-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs hidden" id="btn-confirm-import" onclick="window.confirmImportData()">นำเข้าสินค้า</button>
-<button class="flex-[1.35] py-3.5 bg-violet-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs hidden" id="btn-confirm-import-with-images" onclick="window.enableIntegratedProductImageImport()">📦🖼️ นำเข้าสินค้า + รูป</button>
+
 </div>
 </div>
 </div>
+<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-bulk-image">
+<div class="bg-white w-full max-w-2xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
+<div class="flex justify-between items-center mb-4 border-b pb-3">
+<h3 class="text-xl font-black text-slate-800">🖼️ นำเข้ารูปภาพเป็นชุด</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-bulk-image')">✕</button>
+</div>
+<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
+          1) เลือกไฟล์ <b>image_mapping.json</b> (ไฟล์จับคู่ชื่อสินค้ากับชื่อไฟล์รูป)<br/>
+          2) เลือก<b>ไฟล์รูปทั้งหมดพร้อมกัน</b> (แตะเลือกได้หลายไฟล์จาก Files app)<br/>
+          3) กด "เริ่มนำเข้ารูปภาพ" — ระบบจะอัปโหลดรูปเข้า Supabase Storage แล้วผูกเข้ากับสินค้าที่<b>ชื่อตรงกัน</b>ให้อัตโนมัติ (สินค้าที่หารูปไม่เจอหรือชื่อไม่ตรงจะข้ามไปและแจ้งในสรุปผล)
+        </p>
+<div class="mb-3">
+<label class="text-xs font-bold text-slate-700 block mb-1">1. ไฟล์ image_mapping.json</label>
+<input accept=".json" class="w-full text-xs border rounded-xl p-2 text-slate-800" id="bulk-image-mapping-input" type="file"/>
+</div>
+<div class="mb-4">
+<label class="text-xs font-bold text-slate-700 block mb-1">2. ไฟล์รูปภาพทั้งหมด (เลือกได้หลายไฟล์)</label>
+<input accept="image/*" class="w-full text-xs border rounded-xl p-2 text-slate-800" id="bulk-image-files-input" multiple="" type="file"/>
+</div>
+<div class="hidden mb-4" id="bulk-image-progress-wrap">
+<div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+<div class="bg-indigo-600 h-3 rounded-full transition-all" id="bulk-image-progress-bar" style="width:0%"></div>
+</div>
+<p class="text-[10px] text-slate-500 mt-1 text-center" id="bulk-image-progress-text"></p>
+</div>
+<div class="hidden text-[10px] font-mono bg-slate-50 border rounded-xl p-3 max-h-40 overflow-y-auto mb-4 whitespace-pre-wrap text-slate-700" id="bulk-image-log"></div>
+<div class="flex gap-4 border-t pt-4">
+<button class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold btn-touch text-xs" onclick="window.closeModal('modal-bulk-image')">ปิด</button>
+<button class="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs" id="btn-start-bulk-image" onclick="window.startBulkImageImport()">เริ่มนำเข้ารูปภาพ</button>
+</div>
+</div>
+</div>
+
+
+
+
+
+
 <div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-cleanup-images">
 <div class="bg-white w-full max-w-3xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
 <div class="flex justify-between items-center mb-4 border-b pb-3">
@@ -1787,5 +1843,5 @@ body{
 
 
 
-<script defer src="js/00-error-overlay.js"></script><script defer src="js/00-failsafe.js"></script><script defer src="js/10-product-code.js"></script><script defer src="js/11-image-cleanup.js"></script><script defer src="js/12-gestures.js"></script><script defer src="js/14-documents.js"></script><script defer src="js/01-core.js"></script><script defer src="js/02-sales-stock.js"></script><script defer src="js/03-admin-backup.js"></script><script defer src="js/04-supabase.js"></script><script defer src="js/05-transaction-monitoring.js"></script><script defer src="js/15-cost-control.js"></script><script defer src="js/16-integrated-product-import.js"></script><script defer src="js/17-v3-ui.js"></script></body>
+<script defer src="js/00-error-overlay.js"></script><script defer src="js/00-failsafe.js"></script><script defer src="js/10-product-code.js"></script><script defer src="js/11-image-cleanup.js"></script><script defer src="js/12-gestures.js"></script><script defer src="js/14-documents.js"></script><script defer src="js/01-core.js"></script><script defer src="js/02-sales-stock.js"></script><script defer src="js/03-admin-backup.js"></script><script defer src="js/04-supabase.js"></script><script defer src="js/05-transaction-monitoring.js"></script><script defer src="js/15-cost-control.js"></script><script defer src="js/13-bulk-image-import.js"></script><script defer src="js/17-v3-ui.js"></script></body>
 </html>
