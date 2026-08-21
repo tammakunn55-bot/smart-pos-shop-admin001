@@ -20,17 +20,54 @@ function getAccountScopedKey(base, accountId = null) {
   const id = String(accountId || localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
   return id ? `${base}::${id}` : base;
 }
+function readFirstLocalStorage(keys) {
+  for (const key of keys) {
+    try {
+      const value = String(localStorage.getItem(key) || '').trim();
+      if (value) return value;
+    } catch (_) {}
+  }
+  return '';
+}
 function getConfiguredSupabaseUrl(accountId = null) {
-  const scoped = localStorage.getItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId));
-  return scoped || '';
+  const scopedKey = getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId);
+  const scoped = readFirstLocalStorage([scopedKey]);
+  if (scoped) return scoped.replace(/\/$/, '');
+  // Backward compatibility: older Smart POS builds stored the same public
+  // project config without an account suffix. Reuse it and migrate it to the
+  // current account namespace instead of falsely reporting "cloud disconnected".
+  const legacy = readFirstLocalStorage([
+    SUPABASE_URL_STORAGE_KEY,
+    'POS_SUPABASE_URL',
+    'SUPABASE_URL',
+    'supabase_url'
+  ]);
+  if (legacy && accountId) {
+    try { localStorage.setItem(scopedKey, legacy.replace(/\/$/, '')); } catch (_) {}
+  }
+  return legacy.replace(/\/$/, '');
 }
 function getConfiguredSupabaseAnonKey(accountId = null) {
-  const scoped = localStorage.getItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId));
-  return scoped || '';
+  const scopedKey = getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId);
+  const scoped = readFirstLocalStorage([scopedKey]);
+  if (scoped) return scoped;
+  const legacy = readFirstLocalStorage([
+    SUPABASE_KEY_STORAGE_KEY,
+    'POS_SUPABASE_ANON_KEY',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_KEY',
+    'supabase_anon_key'
+  ]);
+  if (legacy && accountId) {
+    try { localStorage.setItem(scopedKey, legacy); } catch (_) {}
+  }
+  return legacy;
 }
 function setConfiguredSupabase(url, key, accountId = null) {
-  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), url);
-  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), key);
+  const cleanUrl = String(url || '').trim().replace(/\/$/, '');
+  const cleanKey = String(key || '').trim();
+  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), cleanUrl);
+  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), cleanKey);
 }
 
 // v2.2: one Supabase project/database is one store.
@@ -162,13 +199,38 @@ window.completeJoinExistingAccount = async function () {
   }
 };
 
-window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEmail = null) {
+window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppliedEmail = null) {
   try {
     const accountId = String(localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
-    if (!accountId || !password) return { ok: false, reason: 'missing_credentials' };
+    if (!accountId) return { ok: false, reason: 'missing_account' };
+    const client = getSupabaseClient();
+    if (!client) return { ok: false, reason: 'cloud_not_configured' };
+
+    // IMPORTANT: if the owner is already authenticated, reuse the persisted
+    // Supabase session. Never ask for the password or sign in again on every
+    // POS start/action. Supabase Auth refreshes the session automatically.
+    const existing = await client.auth.getSession();
+    const existingUser = existing?.data?.session?.user || null;
+    if (existingUser?.id) {
+      const meta = existingUser.user_metadata || {};
+      const rememberedAuthId = localStorage.getItem('POS_SUPABASE_AUTH_USER_ID::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_USER_ID') || '';
+      const sameAccount = !meta.username || String(meta.username).toLowerCase() === accountId;
+      const sameRememberedUser = !rememberedAuthId || String(rememberedAuthId) === String(existingUser.id);
+      if (sameAccount && sameRememberedUser) {
+        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, existingUser.id);
+        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', existingUser.id);
+        if (existingUser.email) {
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, existingUser.email);
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', existingUser.email);
+        }
+        return { ok: true, user: existingUser, session: existing.data.session, reusedSession: true };
+      }
+    }
+
+    // No usable remembered session: only now is a password required.
+    if (!password) return { ok: false, reason: 'missing_credentials' };
     const email = String(suppliedEmail || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL') || '').trim().toLowerCase();
     if (!email) return { ok: false, reason: 'missing_email' };
-    const client = getSupabaseClient();
 
     let result = await client.auth.signInWithPassword({ email, password });
     if (!result.error && result.data?.session) {
@@ -214,10 +276,9 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEm
 // ============================================================
 window.restoreRememberedSupabaseLogin = async function () {
   try {
-    if (!getConfiguredSupabaseUrl() || !getConfiguredSupabaseAnonKey()) {
-      return { ok:false, reason:'cloud_not_configured' };
-    }
-    const client = getSupabaseClient();
+    const ready = await window.ensureSupabaseClientReady({ requireSession:false });
+    if (!ready.ok || !ready.client) return { ok:false, reason:ready.reason || 'cloud_not_configured' };
+    const client = ready.client;
     const { data: sessionData, error: sessionError } = await client.auth.getSession();
     if (sessionError || !sessionData?.session?.user) return { ok:false, reason:'no_session' };
 
@@ -353,19 +414,135 @@ window.saveCodeConfig = function () {
 };
 
 let _supabaseClient = null;
+let _supabaseAuthSubscription = null;
+let _supabaseBootPromise = null;
+
+function getActiveAccountId() {
+  return String(
+    localStorage.getItem('POS_ACCOUNT_ID') ||
+    localStorage.getItem('POS_STORE_ID') ||
+    ''
+  ).trim();
+}
+
+function resolveSupabaseConfig() {
+  const accountId = getActiveAccountId();
+  let url = getConfiguredSupabaseUrl(accountId);
+  let key = getConfiguredSupabaseAnonKey(accountId);
+
+  // Accept config already exposed by the host page/app shell, but never a secret key.
+  if ((!url || !key) && window.SMARTPOS_SUPABASE_CONFIG) {
+    url = url || String(window.SMARTPOS_SUPABASE_CONFIG.url || '').trim();
+    key = key || String(window.SMARTPOS_SUPABASE_CONFIG.anonKey || '').trim();
+  }
+  if ((!url || !key) && window.__SMARTPOS_SUPABASE__) {
+    url = url || String(window.__SMARTPOS_SUPABASE__.url || '').trim();
+    key = key || String(window.__SMARTPOS_SUPABASE__.anonKey || '').trim();
+  }
+
+  if (!url || !key) return null;
+  if (/service_role|sb_secret/i.test(key)) return null;
+  if (!/^https:\/\/[^\s/]+\.supabase\.co(?:\/.*)?$/i.test(url)) return null;
+  return { url: url.replace(/\/$/, ''), key, accountId };
+}
+
 function getSupabaseClient() {
   if (_supabaseClient) return _supabaseClient;
-  const url = getConfiguredSupabaseUrl();
-  const key = getConfiguredSupabaseAnonKey();
-  if (!url || !key) return null;
-  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
-    if (typeof window.showAlert === 'function') window.showAlert("เชื่อมต่อ Supabase ไม่ได้", "ไลบรารี Supabase ยังโหลดไม่สำเร็จ", true);
-    return null;
+  const cfg = resolveSupabaseConfig();
+  if (!cfg) return null;
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return null;
+
+  _supabaseClient = window.supabase.createClient(cfg.url, cfg.key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      flowType: 'pkce'
+    }
+  });
+
+  if (!_supabaseAuthSubscription) {
+    const result = _supabaseClient.auth.onAuthStateChange((event, session) => {
+      window.POS_SUPABASE_SESSION = session || null;
+      window.POS_SUPABASE_AUTH_STATE = event;
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+        if (session?.user?.id) {
+          const accountId = getActiveAccountId();
+          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', session.user.id);
+          if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, session.user.id);
+          if (session.user.email) {
+            localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', session.user.email);
+            if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, session.user.email);
+          }
+        }
+      }
+      if (event === 'SIGNED_OUT') {
+        window.POS_SUPABASE_SESSION = null;
+      }
+      try { window.dispatchEvent(new CustomEvent('smartpos:supabase-auth', { detail: { event, session } })); } catch (_) {}
+    });
+    _supabaseAuthSubscription = result?.data?.subscription || null;
   }
-  _supabaseClient = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   return _supabaseClient;
 }
 window.getSupabaseClient = getSupabaseClient;
+
+window.ensureSupabaseClientReady = async function (options = {}) {
+  const requireSession = options.requireSession !== false;
+  if (_supabaseBootPromise) return _supabaseBootPromise;
+  _supabaseBootPromise = (async () => {
+    const client = getSupabaseClient();
+    if (!client) return { ok:false, reason:'cloud_not_configured', client:null, session:null };
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error) return { ok:false, reason:error.message || 'session_check_failed', client, session:null };
+      const session = data?.session || null;
+      window.POS_SUPABASE_SESSION = session;
+      if (requireSession && !session) return { ok:false, reason:'not_authenticated', client, session:null };
+      return { ok:true, client, session };
+    } catch (e) {
+      return { ok:false, reason:e?.message || 'client_not_ready', client, session:null };
+    } finally {
+      _supabaseBootPromise = null;
+    }
+  })();
+  return _supabaseBootPromise;
+};
+
+window.getSupabaseSession = async function () {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    window.POS_SUPABASE_SESSION = data?.session || null;
+    return data?.session || null;
+  } catch (_) { return null; }
+};
+
+window.refreshSupabaseSession = async function () {
+  const client = getSupabaseClient();
+  if (!client) return { ok:false, reason:'cloud_not_configured' };
+  try {
+    const { data, error } = await client.auth.refreshSession();
+    if (error) return { ok:false, reason:error.message || 'refresh_failed' };
+    window.POS_SUPABASE_SESSION = data?.session || null;
+    return { ok:true, session:data?.session || null };
+  } catch (e) { return { ok:false, reason:e?.message || 'refresh_failed' }; }
+};
+
+// Boot once per page. This does NOT sign in, ask for a password, or contact a
+// different project. It only restores the persisted Supabase session for the
+// already configured store.
+window.initSupabaseAuth = async function () {
+  return window.ensureSupabaseClientReady({ requireSession:false });
+};
+
+// Initialize after the Supabase CDN is available and after localStorage is ready.
+(function bootSupabaseAuth() {
+  const run = () => { try { window.initSupabaseAuth(); } catch (_) {} };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once:true });
+  else run();
+})();
 
 // ------------------------------------------
 // DECOUPLED SYNC & GRANULAR RELATIONAL TABLE SUPPORT
@@ -1202,4 +1379,4 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
   return entry;
 };
 
-window.signOutSupabaseOnly=async function(){try{if(_supabaseClient)await _supabaseClient.auth.signOut();}catch(_){}_supabaseClient=null;};
+window.signOutSupabaseOnly=async function(){try{if(_supabaseClient)await _supabaseClient.auth.signOut();}catch(_){} _supabaseClient=null; _supabaseAuthSubscription=null; window.POS_SUPABASE_SESSION=null; window.POS_SUPABASE_AUTH_STATE='SIGNED_OUT';};

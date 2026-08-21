@@ -34,9 +34,16 @@ window.startBulkImageImport = async function () {
   if (!filesInput?.files?.length) return window.showAlert('ยังไม่ได้เลือกรูป', 'กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 ไฟล์', true);
   if (typeof window.uploadProductImageToSupabase !== 'function') return window.showAlert('ระบบอัปโหลดไม่พร้อม', 'ไม่พบฟังก์ชันอัปโหลดรูป กรุณารีโหลดหน้าเว็บอีกครั้ง', true);
 
-  // Fail early with a clear message instead of producing "null.auth".
-  if (typeof window.getSupabaseClient === 'function' && !window.getSupabaseClient()) {
-    return window.showAlert('ยังไม่ได้เชื่อมต่อคลาวด์', 'กรุณาเข้าสู่ระบบร้าน/เชื่อมต่อ Supabase ก่อนนำเข้ารูปสินค้า', true);
+  // Make sure the current account's Supabase client/session is ready.
+  // The integration layer also migrates legacy unscoped public config keys,
+  // so an existing connected store is not incorrectly reported as disconnected.
+  if (typeof window.ensureSupabaseClientReady === 'function') {
+    const ready = await window.ensureSupabaseClientReady();
+    if (!ready.ok) {
+      return window.showAlert('เชื่อมต่อคลาวด์ไม่พร้อม', 'ไม่สามารถเตรียมการเชื่อมต่อร้านได้: ' + ready.reason, true);
+    }
+  } else if (typeof window.getSupabaseClient === 'function' && !window.getSupabaseClient()) {
+    return window.showAlert('ระบบคลาวด์ไม่พร้อม', 'ไม่พบ Supabase Client กรุณารีโหลดหน้าเว็บอีกครั้ง', true);
   }
 
   let mapping;
