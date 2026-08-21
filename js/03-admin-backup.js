@@ -1359,20 +1359,8 @@ function repairDatabase(db) {
     if (!Array.isArray(p.variants)) { p.variants = []; fixes.push(`สินค้า ${pid} ไม่มี variants → ตั้งเป็น array ว่าง`); }
     if (!Array.isArray(p.cat)) { p.cat = []; fixes.push(`สินค้า ${pid} มี cat ผิดชนิด → ตั้งเป็น array ว่าง`); }
     p.variants.forEach(v => {
-      if (typeof v.stock !== 'number' || isNaN(v.stock)) {
-        const parsedStock = Number(v.stock);
-        if (Number.isFinite(parsedStock)) {
-          v.stock = parsedStock;
-          fixes.push(`variant ${v.id} มี stock เป็นข้อความ/ชนิดผิด → แปลงเป็นตัวเลข ${parsedStock}`);
-        } else {
-          // Never destroy an unknown stock value by silently replacing it with 0.
-          // Startup hydration from product_variants is the authoritative recovery path.
-          fixes.push(`variant ${v.id} มี stock ที่อ่านไม่ได้ → คงค่าเดิมไว้และรอการกู้จากฐานข้อมูลสินค้า`);
-        }
-      } else if (v.stock < 0) {
-        v.stock = 0;
-        fixes.push(`variant ${v.id} มี stock ติดลบ → ปรับเป็น 0`);
-      }
+      if (typeof v.stock !== 'number' || isNaN(v.stock)) { v.stock = 0; fixes.push(`variant ${v.id} มี stock ผิดพลาด → ตั้งเป็น 0`); }
+      else if (v.stock < 0) { v.stock = 0; fixes.push(`variant ${v.id} มี stock ติดลบ → ปรับเป็น 0`); }
       if (typeof v.price !== 'number' || isNaN(v.price)) { v.price = 0; fixes.push(`variant ${v.id} มี price ผิดพลาด → ตั้งเป็น 0`); }
       if (typeof v.cost !== 'number' || isNaN(v.cost)) { v.cost = 0; fixes.push(`variant ${v.id} มี cost ผิดพลาด → ตั้งเป็น 0`); }
       if (v.minStock === undefined) v.minStock = 10;
@@ -1425,36 +1413,6 @@ async function autoRepairIfNeeded(db) {
 
 window.repairDatabase = repairDatabase;
 window.autoRepairIfNeeded = autoRepairIfNeeded;
-
-// Exact duplicate detector. It only reports copies that are byte-for-byte
-// equivalent in business fields; it never deletes them automatically because
-// historical bills may still reference either product id.
-window.scanExactProductDuplicates = function (sourceDb = db) {
-  const groups = new Map();
-  for (const p of Object.values(sourceDb?.products || {})) {
-    if (!p || p.isDeleted) continue;
-    const signature = JSON.stringify({
-      name: p.name || '',
-      cat: p.cat || [],
-      groupName: p.groupName || '',
-      imageStoragePath: p.imageStoragePath || '',
-      variants: (p.variants || []).map(v => ({
-        sizeName: v.sizeName || '',
-        barcode: v.barcode || '',
-        cost: Number(v.cost) || 0,
-        currentCost: Number(v.currentCost) || 0,
-        lastCost: Number(v.lastCost) || 0,
-        price: Number(v.price) || 0,
-        stock: Number(v.stock) || 0,
-        minStock: Number(v.minStock) || 0,
-        fractions: v.fractions || []
-      }))
-    });
-    if (!groups.has(signature)) groups.set(signature, []);
-    groups.get(signature).push(p.id);
-  }
-  return Array.from(groups.values()).filter(ids => ids.length > 1);
-};
 
 
 // ============ FROM: Smart-pos-pro-v9-modular/js/db/versioning.js ============

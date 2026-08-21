@@ -186,18 +186,39 @@
         });
       };
 
-      window.__smartPosSound = Object.assign({enabled:true,volume:0.35,success:'success',sale:'sale',error:'error',voiceTotal:false},(()=>{try{return JSON.parse(localStorage.getItem('POS_SOUND_SETTINGS')||'{}')}catch(_){return {}}})());
-function getSoundSettings(){return window.__smartPosSound;}
-window.saveSoundSettings=function(){const s=getSoundSettings(),e=id=>document.getElementById(id);if(e('setting-sound-enabled'))s.enabled=e('setting-sound-enabled').checked;if(e('setting-sound-volume'))s.volume=Math.max(0,Math.min(1,Number(e('setting-sound-volume').value)/100));if(e('setting-sound-success'))s.success=e('setting-sound-success').value;if(e('setting-sound-sale'))s.sale=e('setting-sound-sale').value;if(e('setting-sound-error'))s.error=e('setting-sound-error').value;if(e('setting-voice-total'))s.voiceTotal=e('setting-voice-total').checked;localStorage.setItem('POS_SOUND_SETTINGS',JSON.stringify(s));};
-window.loadSoundSettings=function(){const s=getSoundSettings(),e=id=>document.getElementById(id);if(e('setting-sound-enabled'))e('setting-sound-enabled').checked=s.enabled!==false;if(e('setting-sound-volume'))e('setting-sound-volume').value=Math.round((s.volume??0.35)*100);if(e('setting-sound-success'))e('setting-sound-success').value=s.success||'success';if(e('setting-sound-sale'))e('setting-sound-sale').value=s.sale||'sale';if(e('setting-sound-error'))e('setting-sound-error').value=s.error||'error';if(e('setting-voice-total'))e('setting-voice-total').checked=!!s.voiceTotal;};
-window.previewSoundVolume=function(v){getSoundSettings().volume=Math.max(0,Math.min(1,Number(v)/100));};
-window.testSound=function(t){window.playSound(t);};
-window.playSound=function(type){try{const s=getSoundSettings();if(!s.enabled)return;const preset=s[type]||type;if(preset==='none')return;const Ctx=window.AudioContext||window.webkitAudioContext;if(!Ctx)return;const ctx=window.__posAudioContext||(window.__posAudioContext=new Ctx());if(ctx.state==='suspended')ctx.resume().catch(()=>{});const master=Math.max(.01,Math.min(1,Number(s.volume)||.35)),now=ctx.currentTime;if(preset==='sale'){[660,990].forEach((freq,i)=>{const o=ctx.createOscillator(),g=ctx.createGain(),t=now+i*.09;o.type='sine';o.frequency.value=freq;g.gain.setValueAtTime(master*.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.2);o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+.22)});return}const o=ctx.createOscillator(),g=ctx.createGain();o.type=preset==='error'?'sawtooth':'sine';o.frequency.value=preset==='error'?180:(preset==='soft'?520:800);g.gain.setValueAtTime(master*(preset==='error'?.45:.28),now);g.gain.exponentialRampToValueAtTime(.001,now+(preset==='error'?.28:.12));o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+(preset==='error'?.3:.14));}catch(_){}};
-window.speakThaiNumber=function(v){const s=getSoundSettings();if(!s.enabled||!s.voiceTotal||!('speechSynthesis'in window))return;const u=new SpeechSynthesisUtterance('ยอดรวม '+Number(v||0).toLocaleString('th-TH',{maximumFractionDigits:2})+' บาท');u.lang='th-TH';u.rate=.95;u.volume=Math.max(0,Math.min(1,Number(s.volume)||.35));try{speechSynthesis.cancel();speechSynthesis.speak(u)}catch(_){}};
-window.confirmLogout=function(){window.showCustomConfirm('ออกจากระบบ?','ระบบจะบันทึกข้อมูลที่ค้างอยู่ก่อน แล้วออกจากบัญชีบนเครื่องนี้ ต้องการดำเนินการต่อหรือไม่?',()=>window.logoutCurrentUser());};
-window.logoutCurrentUser=async function(){try{if(typeof window.persist==='function')window.persist();if(typeof window.pushFullStateToSupabaseSafe==='function'&&window.supabaseSessionReady)await Promise.race([window.pushFullStateToSupabaseSafe(true),new Promise(r=>setTimeout(r,5000))]);}catch(_){}try{if(typeof window.clearProductImageCache==='function')await window.clearProductImageCache();if(typeof window.stopAutoSync==='function')window.stopAutoSync();}catch(_){}try{if(typeof window.signOutSupabaseOnly==='function')await window.signOutSupabaseOnly();}catch(_){}localStorage.removeItem('POS_SUPABASE_AUTH_USER_ID');localStorage.removeItem('POS_ACCOUNT_ID');localStorage.removeItem('POS_STORE_ID');localStorage.removeItem('POS_STORE_NAME');localStorage.removeItem('POS_STORE_ROLE');window.supabaseSessionReady=false;location.reload();};
+      window.playSound = function(type) {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (type === 'sale') {
+            // เสียง 2 โน้ตไล่ระดับขึ้น ให้ความรู้สึก "ปิดการขายสำเร็จ" ชัดเจน แยกจากเสียงบี๊บเพิ่มสินค้าธรรมดา
+            [660, 990].forEach((freq, i) => {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.connect(gain); gain.connect(ctx.destination);
+              osc.type = 'sine';
+              const startAt = ctx.currentTime + i * 0.09;
+              osc.frequency.setValueAtTime(freq, startAt);
+              gain.gain.setValueAtTime(0.12, startAt);
+              gain.gain.exponentialRampToValueAtTime(0.001, startAt + 0.18);
+              osc.start(startAt); osc.stop(startAt + 0.2);
+            });
+            return;
+          }
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          if (type === 'success') {
+            osc.type = 'sine'; osc.frequency.setValueAtTime(800, ctx.currentTime);
+            gain.gain.setValueAtTime(0.1, ctx.currentTime); osc.start(); osc.stop(ctx.currentTime + 0.1);
+          } else if (type === 'error') {
+            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, ctx.currentTime);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime); osc.start(); osc.stop(ctx.currentTime + 0.3);
+          }
+        } catch(e) {}
+      };
 
-function getDailyBillId() {
+      function getDailyBillId() {
         const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         if (!db.counters.lastBillDate || db.counters.lastBillDate !== today) {
           db.counters.lastBillDate = today;
@@ -351,7 +372,7 @@ window.__pendingProductImageStoragePath = null;
       // DATABASE INITIALIZATION & MIGRATION
       // ==========================================
       window.addEventListener('DOMContentLoaded', async () => {
-        try { if (typeof window.loadSoundSettings === 'function') window.loadSoundSettings();
+        try {
           // บังคับตั้งค่า Supabase ของตัวเองก่อนใช้งานครั้งแรกทุกเครื่อง — ไฟล์นี้ไม่มีฐานข้อมูล
           // เริ่มต้นแนบมาให้ในตัวไฟล์เลย (ตั้งใจ ไม่ใช่บั๊ก) เพื่อไม่ให้ใครก็ตามที่นำไฟล์นี้ไปใช้
           // ต่อเข้าฐานข้อมูลเดียวกันโดยไม่รู้ตัว ต้องกรอก Project URL + anon key ของตัวเองก่อนเสมอ
@@ -464,27 +485,11 @@ window.__pendingProductImageStoragePath = null;
 
           const lockScreen = document.getElementById('lock-screen');
           if (lockScreen) {
+            // ห้ามปลดล็อกอัตโนมัติเมื่อมี Supabase เพราะต้องมี Auth session ก่อน RLS จะอนุญาต
             currentUserId = null;
             currentUserName = '';
             lockScreen.style.display = 'flex';
-
-            // Restore the persisted Supabase Auth session when available.
-            // No password is stored or reused by the application.
-            let restored = null;
-            if (hasSupabaseConfig && typeof window.restoreRememberedSupabaseLogin === 'function') {
-              restored = await window.restoreRememberedSupabaseLogin();
-            }
-
-            if (restored?.ok) {
-              currentUserId = restored.user.id;
-              currentUserName = restored.user.name || restored.user.id;
-              localStorage.setItem('POS_LAST_LOGIN_USER_ID', String(restored.user.id).toLowerCase());
-              lockScreen.style.opacity = '0';
-              setTimeout(() => { lockScreen.style.display = 'none'; lockScreen.style.opacity = '1'; }, 150);
-              showToast('เข้าสู่ระบบอัตโนมัติ: ' + (restored.user.name || restored.user.id));
-            } else {
-              setTimeout(() => document.getElementById('login-user-id')?.focus(), 80);
-            }
+            setTimeout(() => document.getElementById('login-user-id')?.focus(), 80);
           }
 
           setInterval(() => {
@@ -844,8 +849,6 @@ window.__pendingProductImageStoragePath = null;
         accountLoginFailCount = 0;
         currentUserId = user.id;
         currentUserName = user.name;
-        // Remember only the user ID; never store the password.
-        localStorage.setItem('POS_LAST_LOGIN_USER_ID', String(user.id).toLowerCase());
         // หมายเหตุ: ไม่แก้ POS_ACCOUNT_ID ที่นี่โดยเจตนา — ตัวแปรนี้แทน "ร้าน/บัญชีที่โหลดอยู่บน
         // เครื่องนี้" (กำหนดครั้งเดียวตอน setup/เชื่อมต่อร้านเท่านั้น) ส่วน currentUserId ด้านบนคือ
         // "พนักงานคนไหนกำลังใช้งานอยู่ตอนนี้" คนละความหมายกัน การเซ็ต POS_ACCOUNT_ID = user.id ของ
@@ -1303,16 +1306,14 @@ window.__pendingProductImageStoragePath = null;
         const pid = imgEl.dataset.pid || '';
         if (pid && !imgEl.dataset.retrying) {
           imgEl.dataset.retrying = '1';
-          const product = db?.products?.[pid];
-          if (product?.imageStoragePath && typeof window.getCachedProductImage === 'function') {
-            const cached = await window.getCachedProductImage(product.imageStoragePath);
-            if (cached) { imgEl.src = cached; return; }
-          }
           const ok = typeof window.refreshProductImageUrl === 'function'
-            ? await window.refreshProductImageUrl(pid, false)
+            ? await window.refreshProductImageUrl(pid)
             : false;
           const fresh = db?.products?.[pid]?.imageUrl;
-          if (ok && fresh) { imgEl.src = fresh; return; }
+          if (ok && fresh) {
+            imgEl.src = fresh;
+            return;
+          }
         }
         const fallback = document.createElement('div');
         fallback.className = 'absolute inset-0 flex items-center justify-center text-4xl bg-slate-100';
@@ -1393,7 +1394,7 @@ window.__pendingProductImageStoragePath = null;
           }
 
           const p = card.product;
-          const hasPhoto = !!p.imageUrl || !!p.imageStoragePath;
+          const hasPhoto = !!p.imageUrl;
           if (hasPhoto) {
             return `
               <div onclick="window.onProductClick('${escapeHTML(p.id)}')" class="p-card relative overflow-hidden h-48 shadow-xs cursor-pointer">
@@ -1958,7 +1959,7 @@ window.__pendingProductImageStoragePath = null;
             persist();
             cart=[]; window.cart=cart; if (typeof window.clearCartDraft==='function') window.clearCartDraft(); updateCartUI(); closeModal('modal-payment');
             selectedBillForReceipt=bill; renderReceiptContent(bill); const modalReceipt=document.getElementById('modal-receipt'); if(modalReceipt){modalReceipt.classList.remove('hidden');modalReceipt.classList.add('flex');}
-            showToast('บันทึกการขายสำเร็จ (ยืนยันจากฐานข้อมูลกลาง)'); playSound('sale'); speakThaiNumber(total);
+            showToast('บันทึกการขายสำเร็จ (ยืนยันจากฐานข้อมูลกลาง)'); playSound('sale');
             return true;
           }
 
@@ -2035,11 +2036,6 @@ window.__pendingProductImageStoragePath = null;
             });
           }
 
-          if (typeof window.decoupledPersist === 'function') {
-            window.decoupledPersist(['products']);
-          } else {
-            persist();
-          }
           logTransaction('SALE', { billId, total, method: activePayMethod, customerId: cid, itemCount: bill.items.length });
 
           cart = [];

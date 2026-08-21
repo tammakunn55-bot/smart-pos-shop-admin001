@@ -17,9 +17,20 @@
       // emoji icon span — built via real DOM APIs (not string concatenation),
       // so there's never a moment where both the broken image AND the emoji
       // exist in the DOM at once, and no HTML-escaping edge cases to get wrong.
-      window.handleProductImgError = function(imgEl) {
+      window.handleProductImgError = async function(imgEl) {
         const emoji = imgEl.dataset.fallbackEmoji || '📦';
         const pid = imgEl.dataset.pid || '';
+        if (pid && !imgEl.dataset.retrying) {
+          imgEl.dataset.retrying = '1';
+          const ok = typeof window.refreshProductImageUrl === 'function'
+            ? await window.refreshProductImageUrl(pid)
+            : false;
+          const fresh = db?.products?.[pid]?.imageUrl;
+          if (ok && fresh) {
+            imgEl.src = fresh;
+            return;
+          }
+        }
         const span = document.createElement('span');
         span.className = 'inline-edit-cell';
         span.textContent = emoji;
@@ -2308,11 +2319,7 @@
           }
         });
 
-        if (typeof window.decoupledPersist === 'function') {
-          window.decoupledPersist(['products']);
-        } else {
-          persist();
-        }
+        persist();
         logTransaction('PO_RECEIVE', { poId, supplierId, total: totalCost, itemCount: po.items.length });
         poList = [];
         activeReceiveDraftId = null;
