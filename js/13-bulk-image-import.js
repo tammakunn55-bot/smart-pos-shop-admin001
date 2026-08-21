@@ -1,138 +1,118 @@
-/* Smart POS — legacy JSON + image bulk import
- * Includes a small modal controller because the current v3 UI no longer exposes
- * openModal()/closeModal() globally. This keeps the legacy quick-import card
- * self-contained and does not touch product/stock logic.
+/* Smart POS — Legacy JSON image importer
+ * image_mapping.json: { "ชื่อสินค้า": "ชื่อไฟล์รูป.ext" }
+ * Keeps the legacy import flow and uses the currently authenticated Supabase client.
  */
 (function () {
-  if (typeof window.openModal !== 'function') {
-    window.openModal = function (id) {
-      const el = document.getElementById(id);
-      if (!el) {
-        console.warn('[SmartPOS] modal not found:', id);
-        return false;
-      }
-      el.classList.remove('hidden');
-      el.setAttribute('aria-hidden', 'false');
-      document.body.classList.add('overflow-hidden');
-      return true;
-    };
-  }
-
-  if (typeof window.closeModal !== 'function') {
-    window.closeModal = function (id) {
-      const el = document.getElementById(id);
-      if (!el) return false;
-      el.classList.add('hidden');
-      el.setAttribute('aria-hidden', 'true');
-      if (!document.querySelector('.fixed.inset-0:not(.hidden)[id^=\"modal-\"]')) {
-        document.body.classList.remove('overflow-hidden');
-      }
-      return true;
-    };
-  }
+  window.openModal = window.openModal || function (id) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.classList.remove('hidden');
+    el.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('overflow-hidden');
+    return true;
+  };
+  window.closeModal = window.closeModal || function (id) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.classList.add('hidden');
+    el.setAttribute('aria-hidden', 'true');
+    if (!document.querySelector('.fixed.inset-0:not(.hidden)[id^="modal-"]')) document.body.classList.remove('overflow-hidden');
+    return true;
+  };
 })();
 
-/* Bulk image import tool — uploads many product images to Supabase Storage in one go
-       and attaches each to the matching product by name, instead of one-by-one manually. */
-    window.startBulkImageImport = async function () {
-      const mappingInput = document.getElementById('bulk-image-mapping-input');
-      const filesInput = document.getElementById('bulk-image-files-input');
-      const btn = document.getElementById('btn-start-bulk-image');
-      const progressWrap = document.getElementById('bulk-image-progress-wrap');
-      const progressBar = document.getElementById('bulk-image-progress-bar');
-      const progressText = document.getElementById('bulk-image-progress-text');
-      const logBox = document.getElementById('bulk-image-log');
+window.startBulkImageImport = async function () {
+  const mappingInput = document.getElementById('bulk-image-mapping-input');
+  const filesInput = document.getElementById('bulk-image-files-input');
+  const btn = document.getElementById('btn-start-bulk-image');
+  const progressWrap = document.getElementById('bulk-image-progress-wrap');
+  const progressBar = document.getElementById('bulk-image-progress-bar');
+  const progressText = document.getElementById('bulk-image-progress-text');
+  const logBox = document.getElementById('bulk-image-log');
 
-      if (!mappingInput.files[0]) return window.showAlert('ยังไม่ได้เลือกไฟล์', 'กรุณาเลือกไฟล์ image_mapping.json ก่อน', true);
-      if (!filesInput.files.length) return window.showAlert('ยังไม่ได้เลือกรูป', 'กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 ไฟล์', true);
+  if (!mappingInput?.files?.[0]) return window.showAlert('ยังไม่ได้เลือกไฟล์', 'กรุณาเลือกไฟล์ image_mapping.json ก่อน', true);
+  if (!filesInput?.files?.length) return window.showAlert('ยังไม่ได้เลือกรูป', 'กรุณาเลือกไฟล์รูปภาพอย่างน้อย 1 ไฟล์', true);
+  if (typeof window.uploadProductImageToSupabase !== 'function') return window.showAlert('ระบบอัปโหลดไม่พร้อม', 'ไม่พบฟังก์ชันอัปโหลดรูป กรุณารีโหลดหน้าเว็บอีกครั้ง', true);
 
-      let mapping;
+  // Fail early with a clear message instead of producing "null.auth".
+  if (typeof window.getSupabaseClient === 'function' && !window.getSupabaseClient()) {
+    return window.showAlert('ยังไม่ได้เชื่อมต่อคลาวด์', 'กรุณาเข้าสู่ระบบร้าน/เชื่อมต่อ Supabase ก่อนนำเข้ารูปสินค้า', true);
+  }
+
+  let mapping;
+  try {
+    mapping = JSON.parse(await mappingInput.files[0].text());
+  } catch (err) {
+    return window.showAlert('ไฟล์ mapping ไม่ถูกต้อง', 'เปิดไฟล์ image_mapping.json ไม่สำเร็จ: ' + (err.message || err), true);
+  }
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+    return window.showAlert('ไฟล์ mapping ไม่ถูกต้อง', 'ต้องเป็น JSON แบบ {"ชื่อสินค้า":"ชื่อไฟล์รูป"}', true);
+  }
+
+  const fileByName = Object.create(null);
+  Array.from(filesInput.files).forEach(f => { fileByName[f.name] = f; fileByName[f.name.toLowerCase()] = f; });
+  const entries = Object.entries(mapping).filter(([name, fname]) => String(name || '').trim() && String(fname || '').trim());
+  if (!entries.length) return window.showAlert('ไม่มีข้อมูลให้นำเข้า', 'ไฟล์ mapping ไม่มีรายการที่ระบุชื่อไฟล์รูป', true);
+
+  btn.disabled = true;
+  btn.innerText = 'กำลังนำเข้า...';
+  progressWrap?.classList.remove('hidden');
+  logBox?.classList.remove('hidden');
+  if (logBox) logBox.innerHTML = '';
+
+  let done = 0, ok = 0, noProduct = 0, noFile = 0, failed = 0;
+  const total = entries.length;
+  const log = msg => { if (logBox) { logBox.innerHTML += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; } };
+  const updateProgress = () => {
+    const pct = Math.round((done / total) * 100);
+    if (progressBar) progressBar.style.width = pct + '%';
+    if (progressText) progressText.innerText = `${done}/${total} — สำเร็จ ${ok} | หาสินค้าไม่เจอ ${noProduct} | หารูปไม่เจอ ${noFile} | ล้มเหลว ${failed}`;
+  };
+  updateProgress();
+
+  const products = Object.values(window.db?.products || {});
+  const normalize = s => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const productByName = new Map();
+  products.forEach(p => { if (p?.name) productByName.set(normalize(p.name), p); });
+
+  const CONCURRENCY = 2; // safer on iPhone/iPad and Supabase Storage
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= entries.length) return;
+      const [productName, imageName] = entries[idx];
+      const file = fileByName[imageName] || fileByName[String(imageName).toLowerCase()];
+      const product = productByName.get(normalize(productName));
+
+      if (!file) { noFile++; done++; updateProgress(); log(`⬜ ไม่พบไฟล์รูป "${imageName}" สำหรับ "${productName}"`); continue; }
+      if (!product) { noProduct++; done++; updateProgress(); log(`⬜ ไม่พบสินค้าชื่อ "${productName}" ในระบบ (ข้าม)`); continue; }
+
       try {
-        const text = await mappingInput.files[0].text();
-        mapping = JSON.parse(text); // { "ชื่อสินค้า": "ชื่อไฟล์รูป.jpg", ... }
+        const result = await window.uploadProductImageToSupabase(file, product.id);
+        if (!result?.path) throw new Error('อัปโหลดสำเร็จแต่ไม่ได้ imageStoragePath');
+        product.imageStoragePath = result.path;
+        product.imageUrl = result.url || '';
+        product.imageUpdatedAt = new Date().toISOString();
+        product.imageVersion = Number(product.imageVersion || 0) + 1;
+        ok++;
+        log(`✅ ${productName}`);
       } catch (err) {
-        return window.showAlert('ไฟล์ mapping ไม่ถูกต้อง', 'เปิดไฟล์ image_mapping.json ไม่สำเร็จ: ' + err.message, true);
+        failed++;
+        log(`❌ ${productName} — ${err?.message || err}`);
       }
+      done++; updateProgress();
+    }
+  }
 
-      // Build a lookup of filename -> File object from the selected image files
-      const fileByName = {};
-      Array.from(filesInput.files).forEach(f => { fileByName[f.name] = f; });
-
-      const entries = Object.entries(mapping).filter(([name, fname]) => fname); // skip products with no image file
-      if (entries.length === 0) return window.showAlert('ไม่มีข้อมูลให้นำเข้า', 'ไฟล์ mapping ไม่มีรายการที่ระบุชื่อไฟล์รูปเลย', true);
-
-      btn.disabled = true;
-      btn.innerText = 'กำลังนำเข้า...';
-      progressWrap.classList.remove('hidden');
-      logBox.classList.remove('hidden');
-      logBox.innerHTML = '';
-
-      let done = 0, ok = 0, noProduct = 0, noFile = 0, failed = 0;
-      const total = entries.length;
-      const log = (msg) => { logBox.innerHTML += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; };
-
-      function updateProgress() {
-        const pct = Math.round((done / total) * 100);
-        progressBar.style.width = pct + '%';
-        progressText.innerText = `${done}/${total} — สำเร็จ ${ok} | หาสินค้าไม่เจอ ${noProduct} | หารูปไม่เจอ ${noFile} | ล้มเหลว ${failed}`;
-      }
-      updateProgress();
-
-      // Process with limited concurrency so we don't fire 500+ uploads at once
-      const CONCURRENCY = 4;
-      let cursor = 0;
-      async function worker() {
-        while (cursor < entries.length) {
-          const idx = cursor++;
-          const [productName, imgFileName] = entries[idx];
-
-          const file = fileByName[imgFileName];
-          if (!file) {
-            noFile++; done++; updateProgress();
-            log(`⬜ ไม่พบไฟล์รูป "${imgFileName}" สำหรับ "${productName}"`);
-            continue;
-          }
-
-          const product = Object.values(db.products).find(p => p.name.toLowerCase() === productName.toLowerCase());
-          if (!product) {
-            noProduct++; done++; updateProgress();
-            log(`⬜ ไม่พบสินค้าชื่อ "${productName}" ในระบบ (ข้าม)`);
-            continue;
-          }
-
-          try {
-            const uploadResult = await window.uploadProductImageToSupabase(file, product.id);
-            if (uploadResult?.url) {
-              product.imageUrl = uploadResult.url;
-              product.imageStoragePath = uploadResult.path || product.imageStoragePath || '';
-              ok++;
-              log(`✅ ${productName}`);
-            } else {
-              failed++;
-              log(`❌ อัปโหลดไม่สำเร็จ: ${productName}`);
-            }
-          } catch (err) {
-            failed++;
-            log(`❌ ${productName} — ${err.message || err}`);
-          }
-          done++; updateProgress();
-        }
-      }
-
-      await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-
-      if (typeof window.decoupledPersist === 'function') {
-        window.decoupledPersist(['products']);
-      } else if (typeof persist === 'function') {
-        persist();
-      }
-      if (activeView === 'stock' && typeof window.renderStock === 'function') window.renderStock();
-
-      btn.disabled = false;
-      btn.innerText = 'เริ่มนำเข้ารูปภาพ';
-      window.showAlert(
-        'นำเข้ารูปภาพเสร็จสิ้น',
-        `สำเร็จ ${ok} รายการ จากทั้งหมด ${total} รายการ (หาสินค้าไม่เจอ ${noProduct}, หารูปไม่เจอ ${noFile}, ล้มเหลว ${failed})`,
-        false
-      );
-    };
+  try {
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker));
+    if (typeof window.decoupledPersist === 'function') window.decoupledPersist(['products']);
+    else if (typeof window.persist === 'function') window.persist();
+    if (window.activeView === 'stock' && typeof window.renderStock === 'function') window.renderStock();
+    window.showAlert('นำเข้ารูปภาพเสร็จสิ้น', `สำเร็จ ${ok} รายการ จากทั้งหมด ${total} รายการ (หาสินค้าไม่เจอ ${noProduct}, หารูปไม่เจอ ${noFile}, ล้มเหลว ${failed})`, failed > 0);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = 'เริ่มนำเข้ารูปภาพ';
+  }
+};

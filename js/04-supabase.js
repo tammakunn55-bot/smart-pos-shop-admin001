@@ -92,6 +92,76 @@ window.completeFirstTimeSetup = async function () {
 // สร้าง DB_DEFAULT ว่างๆ ทับ — ยืนยันตัวด้วยอีเมล/รหัสผ่านของ "เจ้าของร้าน" (คนเดียวที่ผูก
 // Supabase Auth ไว้) หนึ่งครั้ง ดึง pos_state ฉบับเต็มมาเก็บเป็นฐานข้อมูลของเครื่องนี้ แล้วให้
 // เครื่องนี้ล็อกอินด้วย PIN ของพนักงานแต่ละคนตามปกติในครั้งถัดๆ ไป (เหมือนเครื่องแรก)
+window.completeJoinExistingAccount = async function () {
+  const errEl = document.getElementById('setup-join-error');
+  const showErr = (msg) => { if (errEl) { errEl.textContent = '❌ ' + msg; errEl.classList.remove('hidden'); } };
+  if (errEl) errEl.classList.add('hidden');
+
+  const url = (document.getElementById('setup-join-url')?.value || '').trim().replace(/\/$/, '');
+  const key = (document.getElementById('setup-join-key')?.value || '').trim();
+  const email = (document.getElementById('setup-join-email')?.value || '').trim().toLowerCase();
+  const password = document.getElementById('setup-join-password')?.value || '';
+
+  if (!url || !key || !email || !password) return showErr('กรุณากรอกข้อมูลให้ครบทุกช่อง');
+  if (!/^https:\/\/.+\.supabase\.co$/.test(url)) return showErr('รูปแบบ Project URL ควรเป็น https://xxxxx.supabase.co');
+  if (!/^\S+@\S+\.\S+$/.test(email)) return showErr('รูปแบบอีเมลไม่ถูกต้อง');
+  if (/service_role|sb_secret/i.test(key)) return showErr('ห้ามใช้ service_role/secret key ให้ใช้ anon public key เท่านั้น');
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return showErr('ไม่พบไลบรารี Supabase ในหน้านี้');
+
+  try {
+    // ใช้ client ชั่วคราวแยกต่างหาก ยังไม่บันทึกเป็นค่าเชื่อมต่อของเครื่องจนกว่าจะยืนยันสำเร็จ
+    const tempClient = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+
+    const signIn = await tempClient.auth.signInWithPassword({ email, password });
+    if (signIn.error || !signIn.data?.session) {
+      return showErr('เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (signIn.error?.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'));
+    }
+    const authUser = signIn.data.user;
+
+    const { data: row, error: fetchErr } = await tempClient
+      .from('pos_state')
+      .select('data, updated_at, owner_id')
+      .eq('id', 'main')
+      .maybeSingle();
+
+    if (fetchErr) return showErr('ดึงข้อมูลร้านไม่สำเร็จ: ' + fetchErr.message);
+    if (!row || !row.data) return showErr('ยังไม่พบข้อมูลร้านบนคลาวด์ กรุณาซิงค์ข้อมูลจากเครื่องหลักอย่างน้อย 1 ครั้งก่อน แล้วค่อยเชื่อมต่อเครื่องนี้');
+
+    const pulledDb = row.data;
+    const ownerUser = (pulledDb.users || []).find(u => u.role === 'owner') || (pulledDb.users || [])[0];
+    const storeFingerprint = getStoreFingerprint(url);
+    const accountId = 'store-' + (storeFingerprint || String(ownerUser?.id || email.split('@')[0]).trim().toLowerCase());
+    if (!ownerUser) { return showErr('ข้อมูลร้านที่ดึงมาไม่มีผู้ใช้เริ่มต้น ไม่สามารถตั้งค่าเครื่องนี้ได้'); }
+    await tempClient.rpc('get_my_store').then(({data}) => { const row2 = Array.isArray(data) ? data[0] : data; if (row2?.store_id) localStorage.setItem('POS_STORE_ID', row2.store_id); });
+
+    // เก็บฐานข้อมูลที่ดึงมาไว้ในพื้นที่ของ accountId เดียวกับที่เครื่องหลักใช้ และล้าง legacy key เดิม
+    await localforage.removeItem(DB_KEY_BASE);
+    await localforage.setItem(getAccountDbKey(accountId), pulledDb);
+    await localforage.setItem('POS_ACCOUNT_ID', accountId);
+    await localforage.setItem('POS_FIRST_SETUP_DONE', true);
+
+    localStorage.setItem('POS_ACCOUNT_ID', accountId);
+    localStorage.setItem('POS_STORE_FINGERPRINT', storeFingerprint);
+    localStorage.setItem('POS_STORE_OWNER_AUTH_ID::' + accountId, authUser.id);
+    setConfiguredSupabase(url, key, accountId);
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, email);
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
+    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, authUser.id);
+    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', authUser.id);
+    localStorage.setItem(LAST_SYNCED_KEY, row.updated_at);
+    localStorage.removeItem('PENDING_STORE_NAME');
+    localStorage.removeItem('POS_BOUND_SUPABASE_URL');
+
+    // Keep the authenticated store-owner session on this device; POS members still use local PINs.
+
+    alert('เชื่อมต่อร้าน "' + (pulledDb.storeName || '') + '" สำเร็จ! อุปกรณ์นี้ใช้ฐานข้อมูลร้านเดียวกัน และสมาชิกใช้บัญชีของตัวเองได้');
+    location.reload();
+  } catch (err) {
+    console.error('Join existing account failed:', err);
+    showErr(err.message || String(err));
+  }
+};
+
 window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEmail = null) {
   try {
     const accountId = String(localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
@@ -460,14 +530,7 @@ window.syncProductsToSupabase = async function (isQuiet = false) {
             cost: roundAmt(v.cost),
             price: roundAmt(v.price),
             stock: roundStock(v.stock),
-            min_stock: roundStock(v.minStock),
-            payload_json: {
-              currentCost: roundAmt(v.currentCost ?? v.cost),
-              lastCost: roundAmt(v.lastCost ?? v.cost),
-              costUpdatedAt: v.costUpdatedAt || null,
-              minMarginPct: Number(v.minMarginPct ?? 20) || 20,
-              unit: v.unit || 'ชิ้น'
-            }
+            min_stock: roundStock(v.minStock)
           });
         }));
         if (variantRows.length > 0) {
@@ -548,30 +611,45 @@ window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
 };
 
 window.uploadProductImageToSupabase = async function (file, productId) {
-  if (!file) return null;
+  if (!file) throw new Error('ไม่พบไฟล์รูป');
   if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '') || file.size > 5 * 1024 * 1024) {
     throw new Error('รูปสินค้าต้องเป็น JPG/PNG/WebP และมีขนาดไม่เกิน 5 MB');
   }
+
+  // IMPORTANT: getSupabaseClient() intentionally returns null when the current
+  // account has no saved cloud configuration. Never call .auth/.storage on null.
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูลร้านบนคลาวด์สำหรับบัญชีนี้ กรุณาเข้าสู่ระบบ/เชื่อมต่อร้านก่อนนำเข้ารูป');
+  }
+
   try {
     const compressed = await window.compressImageFile(file);
-    const ext = compressed.name.split('.').pop();
-    const user = (await getSupabaseClient().auth.getUser()).data?.user;
-    if (!user) throw new Error('ต้องมีเจ้าของร้าน (owner) login เชื่อมต่อคลาวด์ในเครื่องนี้ก่อนถึงจะอัปโหลดรูปได้');
-    const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
-    const path = `${storeId}/products/${productId}-${crypto.randomUUID()}.${ext}`;
+    const ext = (compressed.name.split('.').pop() || 'jpg').toLowerCase();
+    const { data: authData, error: authError } = await client.auth.getUser();
+    if (authError) throw new Error('ตรวจสอบผู้ใช้ Supabase ไม่สำเร็จ: ' + authError.message);
+    const user = authData?.user;
+    if (!user) throw new Error('ไม่มี Supabase Session ที่ใช้งานอยู่ กรุณาเข้าสู่ระบบร้านอีกครั้งก่อนนำเข้ารูป');
 
-    const { error: uploadError } = await getSupabaseClient().storage
+    const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
+    const safeProductId = String(productId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!safeProductId) throw new Error('ไม่พบรหัสสินค้า');
+    const randomId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    const path = `${storeId}/products/${safeProductId}-${randomId}.${ext}`;
+
+    const { error: uploadError } = await client.storage
       .from('product-images')
       .upload(path, compressed, { upsert: false, contentType: compressed.type || undefined });
     if (uploadError) throw uploadError;
 
-    const { data, error } = await getSupabaseClient().storage.from('product-images').createSignedUrl(path, 3600);
+    // Signed URL is only for display; path is the durable value saved to the product.
+    const { data, error } = await client.storage.from('product-images').createSignedUrl(path, 3600);
     if (error) throw error;
-    return { url: data.signedUrl, path };
+    return { url: data?.signedUrl || '', path };
   } catch (err) {
-    console.error("Image upload error:", err);
-    showAlert("อัปโหลดรูปไม่สำเร็จ", "เกิดข้อผิดพลาด: " + err.message, true);
-    return null;
+    console.error('Image upload error:', err);
+    if (typeof showAlert === 'function') showAlert('อัปโหลดรูปไม่สำเร็จ', 'เกิดข้อผิดพลาด: ' + (err.message || err), true);
+    throw err;
   }
 };
 
@@ -617,245 +695,39 @@ window.clearProductImageCache=async function(){try{if('caches'in window)await ca
 // Signed URLs are never persisted as the security credential. Only storage paths are durable.
 // ==========================================
 window.__lastStorageUrlRefreshAt = 0;
-function isEphemeralProductImageUrl(url){
-  const u=String(url||'');
-  return u.startsWith('blob:') || u.startsWith('data:') || u.includes('/storage/v1/object/sign/');
-}
-
 window.refreshProductImageUrl = async function (productId, preferCache = true) {
   try {
-    const p=db?.products?.[productId];
-    if(!p?.imageStoragePath) return false;
-
-    // Never trust/persist an old blob URL or an expired signed URL.
-    if(isEphemeralProductImageUrl(p.imageUrl)) p.imageUrl='';
-
-    if(preferCache && window.getCachedProductImage){
-      const cached=await window.getCachedProductImage(p.imageStoragePath);
-      if(cached){ p.imageUrl=cached; p.__imageUrlEphemeral=true; return true; }
-    }
-
-    const client=getSupabaseClient();
-    if(!client) return false;
+    const p=db?.products?.[productId]; if(!p?.imageStoragePath)return false;
+    if(preferCache&&window.getCachedProductImage){const cached=await window.getCachedProductImage(p.imageStoragePath);if(cached){p.imageUrl=cached;return true;}}
+    const client=getSupabaseClient(); if(!client)return false;
     const {data,error}=await client.storage.from('product-images').createSignedUrl(p.imageStoragePath,3600);
-    if(error||!data?.signedUrl) return false;
+    if(error||!data?.signedUrl)return false;
     p.imageUrl=data.signedUrl;
-    p.__imageUrlEphemeral=true;
     await window.cacheProductImage?.(p.imageStoragePath,data.signedUrl);
     return true;
-  } catch(e){ console.warn('Product image URL refresh failed:',e); return false; }
-};
-
-window.refreshPrivateStorageUrls = async function (force = false) {
+  } catch(e){console.warn('Product image URL refresh failed:',e);return false;}
+};window.refreshPrivateStorageUrls = async function (force = false) {
   try {
     const products=Object.values(db.products||{}).filter(p=>p.imageStoragePath);
     const missing=[];
-
     for(const p of products){
-      // imageUrl is only a display handle; imageStoragePath is the durable identity.
-      // Do not skip refresh merely because an old blob/signed URL exists.
-      if(isEphemeralProductImageUrl(p.imageUrl)) p.imageUrl='';
-      if(!force && p.imageUrl) continue;
-
+      if(!force&&p.imageUrl)continue;
       const cached=await window.getCachedProductImage?.(p.imageStoragePath);
-      if(cached){
-        p.imageUrl=cached;
-        p.__imageUrlEphemeral=true;
-      } else {
-        missing.push(p);
-      }
+      if(cached)p.imageUrl=cached;else missing.push(p);
     }
-
-    if(!missing.length) return true;
-    const client=getSupabaseClient();
-    if(!client) return false;
+    if(!missing.length)return true;
+    const client=getSupabaseClient();if(!client)return false;
     const paths=missing.map(p=>p.imageStoragePath);
-
     if(typeof client.storage.from('product-images').createSignedUrls==='function'){
       for(let i=0;i<paths.length;i+=1000){
         const chunk=paths.slice(i,i+1000);
         const {data,error}=await client.storage.from('product-images').createSignedUrls(chunk,3600);
-        if(error) { console.warn('createSignedUrls failed:', error); continue; }
-        if(Array.isArray(data)) await Promise.all(data.map(async(r,j)=>{
-          if(!r?.signedUrl) return;
-          const p=missing[i+j]; if(!p) return;
-          p.imageUrl=r.signedUrl;
-          p.__imageUrlEphemeral=true;
-          await window.cacheProductImage?.(p.imageStoragePath,r.signedUrl);
-        }));
+        if(!error&&Array.isArray(data))await Promise.all(data.map(async(r,j)=>{if(!r?.signedUrl)return;const p=missing[i+j];if(!p)return;p.imageUrl=r.signedUrl;await window.cacheProductImage?.(p.imageStoragePath,r.signedUrl);}));
       }
-    } else {
-      for(const p of missing) await window.refreshProductImageUrl(p.id,false);
-    }
-
-    // IMPORTANT: do not persist blob/signed URLs into pos_state/localforage.
-    // Only imageStoragePath is durable. The next startup will use the cache or
-    // request a fresh signed URL.
-    return true;
-  }catch(e){ console.warn('Storage URL refresh skipped:',e); return false; }
-};
-// ==========================================
-// RELATIONAL PRODUCT MASTER / STOCK HYDRATION
-// ==========================================
-// pos_state is useful for app settings/history, but current stock must have one
-// authoritative source. The relational product_variants table is that source.
-// On startup we therefore refresh product/variant stock from Supabase BEFORE
-// allowing the full-state snapshot to overwrite anything. This also repairs an
-// older pos_state snapshot that accidentally contains stock=0 (or another stale
-// value) without deleting product metadata stored in the snapshot.
-window.hydrateProductStockFromSupabase = async function () {
-  try {
-    const client = getSupabaseClient();
-    if (!client) return { ok:false, reason:'cloud_not_configured', changed:0 };
-
-    const { data: auth } = await client.auth.getUser();
-    if (!auth?.user) return { ok:false, reason:'no_session', changed:0 };
-
-    const [productRes, variantRes, fractionRes] = await Promise.all([
-      client.from('products').select('id,name,icon,image_url,is_deleted,updated_at'),
-      client.from('product_variants').select('id,product_id,size_name,barcode,cost,price,stock,min_stock,payload_json,updated_at'),
-      client.from('product_fractions').select('id,variant_id,fraction_name,multiplier,fraction_price')
-    ]);
-    if (productRes.error) throw productRes.error;
-    if (variantRes.error) throw variantRes.error;
-    if (fractionRes.error) throw fractionRes.error;
-
-    const productRows = Array.isArray(productRes.data) ? productRes.data : [];
-    const variantRows = Array.isArray(variantRes.data) ? variantRes.data : [];
-    const fractionRows = Array.isArray(fractionRes.data) ? fractionRes.data : [];
-
-    if (!productRows.length && !variantRows.length) {
-      return { ok:true, changed:0, productCount:0, variantCount:0 };
-    }
-
-    const fractionMap = new Map();
-    for (const f of fractionRows) {
-      if (!fractionMap.has(f.variant_id)) fractionMap.set(f.variant_id, []);
-      fractionMap.get(f.variant_id).push({
-        id: f.id,
-        fractionName: f.fraction_name || '',
-        fractionMultiplier: Number(f.multiplier) || 1,
-        fractionPrice: Number(f.fraction_price) || 0
-      });
-    }
-
-    const productMap = new Map(productRows.map(r => [String(r.id), r]));
-    const variantByProduct = new Map();
-    for (const v of variantRows) {
-      const pid = String(v.product_id);
-      if (!variantByProduct.has(pid)) variantByProduct.set(pid, []);
-      variantByProduct.get(pid).push(v);
-    }
-
-    let changed = 0;
-    let added = 0;
-
-    // Keep the rich app object from pos_state/local storage; only hydrate the
-    // durable master fields and current numeric stock/cost values.
-    for (const [pid, row] of productMap) {
-      let p = db.products?.[pid];
-      if (!p) {
-        p = {
-          id: pid,
-          name: row.name || '',
-          image: row.icon || '📦',
-          imageUrl: '',
-          imageStoragePath: row.image_url || '',
-          cat: [],
-          variants: [],
-          isDeleted: !!row.is_deleted,
-          groupName: ''
-        };
-        db.products[pid] = p;
-        added++;
-        changed++;
-      } else {
-        if (row.name && p.name !== row.name) { p.name = row.name; changed++; }
-        if (row.icon && p.image !== row.icon) { p.image = row.icon; changed++; }
-        if (row.image_url && p.imageStoragePath !== row.image_url) {
-          p.imageStoragePath = row.image_url;
-          p.imageUrl = '';
-          p.__imageUrlEphemeral = false;
-          changed++;
-        }
-        // Older versions accidentally persisted blob:/signed URLs in local state.
-        // They are not reusable after reload; always discard them and rebuild from path/cache.
-        if (isEphemeralProductImageUrl(p.imageUrl)) {
-          p.imageUrl = '';
-          p.__imageUrlEphemeral = false;
-          changed++;
-        }
-        if (typeof row.is_deleted === 'boolean' && !!p.isDeleted !== !!row.is_deleted) {
-          p.isDeleted = !!row.is_deleted;
-          changed++;
-        }
-      }
-
-      const localVariants = Array.isArray(p.variants) ? p.variants : [];
-      const localById = new Map(localVariants.map(v => [String(v.id), v]));
-      const hydratedVariants = [];
-      for (const rv of (variantByProduct.get(pid) || [])) {
-        const vid = String(rv.id);
-        let v = localById.get(vid);
-        if (!v) {
-          v = {
-            id: vid,
-            sizeName: rv.size_name || '',
-            barcode: rv.barcode || '',
-            cost: Number(rv.cost) || 0,
-            currentCost: Number(rv.cost) || 0,
-            lastCost: Number(rv.cost) || 0,
-            price: Number(rv.price) || 0,
-            stock: Number(rv.stock) || 0,
-            minStock: Number(rv.min_stock) || 0,
-            fractions: fractionMap.get(vid) || []
-          };
-          added++;
-          changed++;
-        } else {
-          const remoteStock = Number(rv.stock);
-          const remoteCost = Number(rv.cost);
-          const remotePrice = Number(rv.price);
-          const remoteMin = Number(rv.min_stock);
-          if (Number.isFinite(remoteStock) && Number(v.stock) !== remoteStock) { v.stock = remoteStock; changed++; }
-          if (Number.isFinite(remoteCost) && Number(v.cost) !== remoteCost) { v.cost = remoteCost; changed++; }
-          if (Number.isFinite(remotePrice) && Number(v.price) !== remotePrice) { v.price = remotePrice; changed++; }
-          if (Number.isFinite(remoteMin) && Number(v.min_stock) !== remoteMin) { v.minStock = remoteMin; changed++; }
-          if (rv.size_name != null && v.sizeName !== rv.size_name) { v.sizeName = rv.size_name; changed++; }
-          if ((rv.barcode || '') !== (v.barcode || '')) { v.barcode = rv.barcode || ''; changed++; }
-          const payload = rv.payload_json && typeof rv.payload_json === 'object' ? rv.payload_json : {};
-          if (payload.currentCost != null) v.currentCost = Number(payload.currentCost) || v.cost;
-          if (payload.lastCost != null) v.lastCost = Number(payload.lastCost) || v.cost;
-          if (payload.costUpdatedAt) v.costUpdatedAt = payload.costUpdatedAt;
-          if (payload.minMarginPct != null) v.minMarginPct = Number(payload.minMarginPct) || 20;
-          if (fractionMap.has(vid)) v.fractions = fractionMap.get(vid);
-        }
-        hydratedVariants.push(v);
-      }
-
-      // Preserve local variants that are not yet present in the relational table
-      // (e.g. an offline product edit waiting to sync).
-      const remoteIds = new Set(hydratedVariants.map(v => String(v.id)));
-      for (const lv of localVariants) {
-        if (!remoteIds.has(String(lv.id))) hydratedVariants.push(lv);
-      }
-      p.variants = hydratedVariants;
-    }
-
-    if (changed > 0 && typeof window.persist === 'function') {
-      // Persist locally, but do NOT immediately push here. The startup caller
-      // decides whether the recovered state is safe to send.
-      await localforage.setItem(getAccountDbKey(), db);
-      window.__productHydrationChanged = true;
-    }
-    return { ok:true, changed, added, productCount:productRows.length, variantCount:variantRows.length };
-  } catch (e) {
-    console.warn('[Product hydration] skipped:', e);
-    return { ok:false, reason:e?.message || String(e), changed:0 };
-  }
-};
-
-// ==========================================
+    }else{for(const p of missing)await window.refreshProductImageUrl(p.id,false);}
+    if(window.persist)window.persist();return true;
+  }catch(e){console.warn('Storage URL refresh skipped:',e);return false;}
+};// ==========================================
 // AUTOMATIC FULL-STATE SYNC (With OCC Conflict Check)
 // ==========================================
 const POS_STATE_ROW_ID = 'main';
@@ -1161,49 +1033,6 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
     const authUserId = authData?.user?.id || null;
     if (!authUserId) throw new Error('ยังไม่มี Supabase Auth session จึงไม่อนุญาตให้ซิงค์ข้อมูล');
 
-    // LAST-RESORT STOCK SAFETY GUARD
-    // Never let a corrupted/stale client snapshot overwrite a healthy remote
-    // stock catalog. This specifically blocks the observed "everything became 0"
-    // and "everything became the same small number" failure modes.
-    const localVariants = Object.values(db.products || {})
-      .filter(p => !p?.isDeleted)
-      .flatMap(p => Array.isArray(p.variants) ? p.variants : []);
-    const numericStocks = localVariants.map(v => Number(v.stock)).filter(Number.isFinite);
-    if (numericStocks.length >= 50) {
-      const localTotalStock = numericStocks.reduce((a,b) => a+b, 0);
-      const allZero = numericStocks.every(v => v === 0);
-      const allSame = numericStocks.every(v => v === numericStocks[0]);
-      if (allZero || (allSame && numericStocks[0] <= 5)) {
-        const remoteCheck = await client
-          .from('pos_state')
-          .select('data, updated_at')
-          .eq('id', POS_STATE_ROW_ID)
-          .maybeSingle();
-        if (!remoteCheck.error && remoteCheck.data?.data) {
-          const remoteVariants = Object.values(remoteCheck.data.data.products || {})
-            .filter(p => !p?.isDeleted)
-            .flatMap(p => Array.isArray(p.variants) ? p.variants : []);
-          const remoteStocks = remoteVariants.map(v => Number(v.stock)).filter(Number.isFinite);
-          const remoteTotal = remoteStocks.reduce((a,b) => a+b, 0);
-          const remoteHasPositive = remoteStocks.some(v => v > 0);
-          const remoteHasVariance = new Set(remoteStocks.map(v => String(v))).size > 1;
-          if ((allZero && remoteHasPositive) ||
-              (allSame && numericStocks[0] <= 5 && remoteHasVariance && remoteTotal !== localTotalStock)) {
-            const message = allZero
-              ? `บล็อกการซิงค์เพื่อป้องกันการเขียนทับสต็อก: เครื่องนี้มีสต็อก 0 ทุกสินค้า แต่ฐานข้อมูลยังมีสต็อก ${remoteTotal} หน่วย`
-              : `บล็อกการซิงค์เพื่อป้องกันสต็อกผิดปกติ: เครื่องนี้มีค่า ${numericStocks[0]} เท่ากันแทบทุกสินค้า แต่ฐานข้อมูลมีสต็อกกระจายหลายค่า`;
-            window.logSystemError?.('STOCK_SYNC_GUARD', message);
-            updateSyncStatusBadge('offline', null);
-            if (Date.now() - pf.lastDialogAt > 5 * 60 * 1000) {
-              pf.lastDialogAt = Date.now();
-              window.showAlert?.('🛡️ ป้องกันสต็อกถูกเขียนทับ', message + '\n\nระบบหยุดการซิงค์อัตโนมัติชั่วคราวเพื่อรักษาสต็อกในฐานข้อมูล', true);
-            }
-            return false;
-          }
-        }
-      }
-    }
-
     const stateForRemote = JSON.parse(JSON.stringify(db));
     Object.values(stateForRemote.products || {}).forEach(p => {
       if (p.imageStoragePath) p.imageUrl = '';
@@ -1253,20 +1082,6 @@ async function checkAndPullNewerStateOnStartup() {
       return;
     }
 
-    // IMPORTANT: product_variants is the current-stock source of truth.
-    // Hydrate it on every authenticated startup, even when pos_state.updated_at
-    // has not changed. This prevents a stale full-state snapshot from turning
-    // every product back to 0 after a reload.
-    const hydration = await withTimeout(
-      window.hydrateProductStockFromSupabase?.() || Promise.resolve({ ok:false }),
-      8000
-    );
-    if (!hydration?.timedOut && hydration?.ok && hydration.changed > 0) {
-      if (typeof window.showToast === 'function') {
-        window.showToast(`☁️ กู้ข้อมูลสต็อกจากฐานข้อมูลสินค้าแล้ว ${hydration.changed} จุด`);
-      }
-    }
-
     const result = await withTimeout(
       client.from('pos_state').select('data, updated_at, owner_id').eq('id', POS_STATE_ROW_ID).maybeSingle(),
       6000
@@ -1289,52 +1104,36 @@ async function checkAndPullNewerStateOnStartup() {
     }
 
     const lastKnownSync = localStorage.getItem(LAST_SYNCED_KEY);
-    const remoteIsNewer = !lastKnownSync || new Date(data.updated_at) > new Date(lastKnownSync);
-
-    if (remoteIsNewer && data.data) {
-      const remoteDb = JSON.parse(JSON.stringify(data.data));
-      if (typeof window.runMigrations === 'function') await window.runMigrations(remoteDb);
-
-      // Do not run auto-repair on the remote snapshot before stock hydration.
-      // Older snapshots can contain malformed/stale stock and repairDatabase()
-      // used to replace such values with 0.
-      window.db = remoteDb;
-      if (typeof db !== 'undefined') { db = window.db; }
-
-      if (typeof window.hydrateProductStockFromSupabase === 'function') {
-        await withTimeout(window.hydrateProductStockFromSupabase(), 8000);
-      }
-
-      if (typeof window.autoRepairIfNeeded === 'function') {
-        const repair = await window.autoRepairIfNeeded(db);
-        if (repair?.ran && typeof window.persist === 'function') await window.persist();
-      }
-
-      localStorage.setItem(LAST_SYNCED_KEY, data.updated_at);
+    if (lastKnownSync && new Date(data.updated_at) <= new Date(lastKnownSync)) {
       updateSyncStatusBadge('synced', data.updated_at);
-      await window.refreshPrivateStorageUrls(false);
-
-      if (typeof renderAll === 'function') renderAll();
-      if (typeof updateShiftUI === 'function') updateShiftUI();
-      if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
-      if (typeof checkStorageQuota === 'function') checkStorageQuota();
       return;
     }
 
-    // Even when pos_state is not newer, the relational product hydration above
-    // may have repaired stock/images. Persist that local correction but do not
-    // blindly overwrite the remote snapshot here.
-    if (hydration?.ok && hydration.changed > 0 && typeof window.persist === 'function') {
-      await window.persist();
-    }
-
+    if (typeof window.runMigrations === 'function') await window.runMigrations(data.data);
+    if (typeof window.autoRepairIfNeeded === 'function') await window.autoRepairIfNeeded(data.data);
+    
+    // Explicit global reassignment
+    window.db = data.data;
+    if (typeof db !== 'undefined') { db = window.db; }
+    
+    localStorage.setItem(LAST_SYNCED_KEY, data.updated_at);
     updateSyncStatusBadge('synced', data.updated_at);
-    await window.refreshPrivateStorageUrls(false);
+    await window.refreshPrivateStorageUrls(true);
 
     if (typeof renderAll === 'function') renderAll();
     if (typeof updateShiftUI === 'function') updateShiftUI();
     if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
     if (typeof checkStorageQuota === 'function') checkStorageQuota();
+
+    // หมายเหตุสำคัญ: ตรงนี้เคยมีโค้ดที่พยายาม "auto-unlock" หน้าจอ PIN โดยหา user ใน db.users
+    // ที่ id ตรงกับ POS_ACCOUNT_ID แล้วเซ็ต currentUserId/currentUserName ทับ — เป็นโค้ดตกค้างจาก
+    // สถาปัตยกรรมเก่าที่ POS_ACCOUNT_ID เคยหมายถึง "พนักงานที่ login อยู่ตอนนี้" (ก่อนจะแก้เป็น
+    // หมายถึง "ร้าน/บัญชีของเครื่องนี้" ซึ่งปกติคือ id ของเจ้าของร้าน) ผลคือทุกครั้งที่ฟังก์ชันนี้ถูก
+    // เรียกหลัง login สำเร็จ (จุดเรียกเดียวคือใน submitAccountLogin หลังยืนยัน PIN ถูกต้องแล้ว)
+    // มันจะเงียบๆ สลับตัวตนที่ใช้บันทึกลง audit log/ใบเสร็จกลับไปเป็น "เจ้าของร้าน" เสมอ ไม่ว่า
+    // พนักงานคนไหนเพิ่ง login จริงก็ตาม — ทำให้ระบบบันทึกผิดคนว่าใครทำรายการขาย/เปิดกะ ฯลฯ ตัด
+    // ออกทั้งบล็อกเพราะไม่จำเป็น (หน้าจอ PIN ถูกซ่อนและ currentUserId ถูกตั้งค่าถูกต้องแล้วใน
+    // submitAccountLogin ก่อนจะเรียกฟังก์ชันนี้เสมอ)
   } catch (err) {
     console.error("Startup sync check failed:", err);
     updateSyncStatusBadge('offline', null);
