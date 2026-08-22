@@ -714,6 +714,120 @@ window.__pendingProductImageStoragePath = null;
       // ==========================================
       // PIN LOCK & SECURE MANAGER AUTHENTICATION
       // ==========================================
+      // Manager-session helpers were missing from the previous build.  Keep them
+      // in core so every module can safely call the same functions.
+      let managerSessionUntil = 0;
+      let managerAuthCallback = null;
+
+      function ensureSecurityState() {
+        db.security = db.security || {};
+        if (typeof db.security.mgrFailCount !== 'number') db.security.mgrFailCount = 0;
+        if (typeof db.security.mgrLockUntil !== 'number') db.security.mgrLockUntil = 0;
+      }
+
+      function updateManagerSessionBadge() {
+        const badge = document.getElementById('mgr-session-badge');
+        const countdown = document.getElementById('mgr-session-countdown');
+        if (!badge || !countdown) return;
+        const remaining = Math.max(0, managerSessionUntil - Date.now());
+        if (!managerSessionUntil || remaining <= 0) {
+          badge.classList.add('hidden');
+          countdown.textContent = '--:--';
+          if (managerSessionUntil) managerSessionUntil = 0;
+          return;
+        }
+        const totalSeconds = Math.ceil(remaining / 1000);
+        const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+        const ss = String(totalSeconds % 60).padStart(2, '0');
+        countdown.textContent = `${mm}:${ss}`;
+        badge.classList.remove('hidden');
+      }
+
+      window.lockManagerSessionNow = function() {
+        managerSessionUntil = 0;
+        managerAuthCallback = null;
+        const badge = document.getElementById('mgr-session-badge');
+        if (badge) badge.classList.add('hidden');
+        const modal = document.getElementById('modal-manager-pin');
+        if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+      };
+
+      window.closeManagerPinModal = function() {
+        managerAuthCallback = null;
+        const modal = document.getElementById('modal-manager-pin');
+        if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+        const input = document.getElementById('mgr-pin-input');
+        const err = document.getElementById('mgr-pin-error');
+        if (input) input.value = '';
+        if (err) { err.textContent = ''; err.classList.add('hidden'); }
+      };
+
+      window.openManagerPinModal = function(onSuccess) {
+        ensureSecurityState();
+        // No manager PIN configured: do not block normal operation.
+        if (!db.pinHash) {
+          if (typeof onSuccess === 'function') onSuccess();
+          return;
+        }
+        // Re-use a still-valid manager session for convenience.
+        if (managerSessionUntil > Date.now()) {
+          if (typeof onSuccess === 'function') onSuccess();
+          updateManagerSessionBadge();
+          return;
+        }
+        if (isMgrPinLocked()) {
+          const modal = document.getElementById('modal-manager-pin');
+          if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+          startMgrLockCountdown();
+          return;
+        }
+        managerAuthCallback = typeof onSuccess === 'function' ? onSuccess : null;
+        const modal = document.getElementById('modal-manager-pin');
+        const input = document.getElementById('mgr-pin-input');
+        const err = document.getElementById('mgr-pin-error');
+        if (err) { err.textContent = ''; err.classList.add('hidden'); }
+        if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+        if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
+      };
+
+      window.submitManagerPin = async function() {
+        ensureSecurityState();
+        if (isMgrPinLocked()) { startMgrLockCountdown(); return; }
+        const input = document.getElementById('mgr-pin-input');
+        const err = document.getElementById('mgr-pin-error');
+        const pin = String(input?.value || '').trim();
+        if (!/^\d{4}$/.test(pin)) {
+          if (err) { err.textContent = 'กรุณากรอก PIN 4 หลัก'; err.classList.remove('hidden'); }
+          return;
+        }
+        const currentHash = await hashPIN(pin, db.pinSalt || '');
+        const legacyHash = await hashPINLegacy(pin, db.pinSalt || '');
+        if (currentHash !== db.pinHash && legacyHash !== db.pinHash) {
+          db.security.mgrFailCount = (db.security.mgrFailCount || 0) + 1;
+          if (db.security.mgrFailCount >= PIN_MAX_ATTEMPTS) {
+            db.security.mgrLockUntil = Date.now() + PIN_LOCK_MS;
+            db.security.mgrFailCount = 0;
+            persist();
+            startMgrLockCountdown();
+          } else if (err) {
+            const left = PIN_MAX_ATTEMPTS - db.security.mgrFailCount;
+            err.textContent = `PIN ไม่ถูกต้อง เหลืออีก ${left} ครั้ง`;
+            err.classList.remove('hidden');
+          }
+          return;
+        }
+        db.security.mgrFailCount = 0;
+        db.security.mgrLockUntil = 0;
+        persist();
+        const minutes = Math.max(0, parseInt(db.settings?.mgrSessionMinutes, 10) || 0);
+        managerSessionUntil = Date.now() + (minutes > 0 ? minutes * 60 * 1000 : 0);
+        const callback = managerAuthCallback;
+        managerAuthCallback = null;
+        window.closeManagerPinModal();
+        if (minutes > 0) updateManagerSessionBadge();
+        if (typeof callback === 'function') callback();
+      };
+
       const PIN_MAX_ATTEMPTS = 5;
       const PIN_LOCK_MS = 30000;
       let mainLockTimerHandle = null;
