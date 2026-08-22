@@ -1025,12 +1025,7 @@ window.pushFullStateToSupabaseSafe = async function () {
     if (!authUserId) throw new Error('ยังไม่มี Supabase Auth session จึงไม่อนุญาตให้ซิงค์ข้อมูล');
 
     const stateForRemote = JSON.parse(JSON.stringify(db));
-    Object.values(stateForRemote.products || {}).forEach(p => {
-      if (p.imageStoragePath) p.imageUrl = '';
-    });
-    (stateForRemote.documents || []).forEach(d => {
-      if (d.fileStoragePath) d.fileUrl = '';
-    });
+    
 
     const { error: upsertErr } = await client
       .from('pos_state')
