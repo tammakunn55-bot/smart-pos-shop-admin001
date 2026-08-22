@@ -5,13 +5,8 @@
 // Requires the Supabase JS client loaded first via CDN in index.html:
 //   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>
 
-// ⚠️ ไม่ควรใส่ Project URL / anon key จริงเป็นค่าเริ่มต้นตรงนี้ — ถ้ามีคนคัดลอกไฟล์นี้ไปใช้
-// (fork repo, โคลนโค้ด ฯลฯ) โดยไม่รู้ตัวจะเชื่อมต่อกับฐานข้อมูลจริงของเจ้าของเดิมทันทีโดยไม่ได้ตั้งใจ
-// ปล่อยว่างไว้ แล้วบังคับให้ตั้งค่าเองก่อนใช้งานครั้งแรกทุกเครื่อง/ทุกคนที่นำไฟล์นี้ไปใช้
 const SUPABASE_URL_DEFAULT = "";
 const SUPABASE_ANON_KEY_DEFAULT = "";
-// SECURITY: Never place service_role, sb_secret, real passwords, customer data, sales data,
-// backups, or uploaded documents in this source file. Public source may contain only the anon key.
 
 const SUPABASE_URL_STORAGE_KEY = 'pos_supabase_url';
 const SUPABASE_KEY_STORAGE_KEY = 'pos_supabase_anon_key';
@@ -33,9 +28,6 @@ function getConfiguredSupabaseUrl(accountId = null) {
   const scopedKey = getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId);
   const scoped = readFirstLocalStorage([scopedKey]);
   if (scoped) return scoped.replace(/\/$/, '');
-  // Backward compatibility: older Smart POS builds stored the same public
-  // project config without an account suffix. Reuse it and migrate it to the
-  // current account namespace instead of falsely reporting "cloud disconnected".
   const legacy = readFirstLocalStorage([
     SUPABASE_URL_STORAGE_KEY,
     'POS_SUPABASE_URL',
@@ -68,15 +60,9 @@ function setConfiguredSupabase(url, key, accountId = null) {
   const cleanKey = String(key || '').trim();
   localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), cleanUrl);
   localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), cleanKey);
+  localStorage.setItem(SUPABASE_URL_STORAGE_KEY, cleanUrl);
+  localStorage.setItem(SUPABASE_KEY_STORAGE_KEY, cleanKey);
 }
-
-// v2.2: one Supabase project/database is one store.
-function getStoreFingerprint(url) { try { return new URL(String(url||'')).hostname.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,40); } catch(e) { return ''; } }
-function getCurrentStoreFingerprint() { return String(localStorage.getItem('POS_STORE_FINGERPRINT')||'').trim(); }
-
-// Supabase Auth password is NEVER persisted locally.
-// Reconnection relies on the normal Supabase Auth session; if the session expires,
-// the user must authenticate again.
 
 window.completeFirstTimeSetup = async function () {
   const storeName = document.getElementById('setup-store-name')?.value.trim() || '';
@@ -100,7 +86,6 @@ window.completeFirstTimeSetup = async function () {
     if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return alert('Supabase Project URL ไม่ถูกต้อง');
     if (/service_role|sb_secret|postgres(ql)?:\/\/|password\s*=/i.test(key)) return alert('ค่าที่กรอกมีลักษณะเป็น Secret/Database credential ซึ่งห้ามใช้ใน Frontend');
 
-    // Runtime-only configuration: never written to source files or GitHub.
     setConfiguredSupabase(url, key, ownerEmail);
     localStorage.setItem('POS_ACCOUNT_ID', ownerEmail);
 
@@ -118,7 +103,6 @@ window.completeFirstTimeSetup = async function () {
     });
 
     if (authResult.error) {
-      // If the account already exists, sign in rather than creating a duplicate.
       const signIn = await client.auth.signInWithPassword({ email: ownerEmail, password });
       if (signIn.error || !signIn.data?.user) {
         throw new Error('สร้าง/เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (authResult.error.message || signIn.error?.message || 'ไม่ทราบสาเหตุ'));
@@ -138,8 +122,6 @@ window.completeFirstTimeSetup = async function () {
 
     if (!user) throw new Error('Supabase ไม่คืนข้อมูลผู้ใช้');
 
-    // With email confirmation enabled Supabase may return a user without a session.
-    // In that case store the pending store name and finish store creation after verification/login.
     let storeId = null;
     if (session) {
       const { data, error } = await client.rpc('create_store', { p_name: storeName, p_code: null });
@@ -187,10 +169,6 @@ window.completeFirstTimeSetup = async function () {
   }
 };
 
-// เชื่อมต่ออุปกรณ์เครื่องที่สอง (หรือเครื่องพนักงาน) เข้ากับร้านที่มีอยู่แล้วบนคลาวด์ แทนที่จะ
-// สร้าง DB_DEFAULT ว่างๆ ทับ — ยืนยันตัวด้วยอีเมล/รหัสผ่านของ "เจ้าของร้าน" (คนเดียวที่ผูก
-// Supabase Auth ไว้) หนึ่งครั้ง ดึง pos_state ฉบับเต็มมาเก็บเป็นฐานข้อมูลของเครื่องนี้ แล้วให้
-// เครื่องนี้ล็อกอินด้วย PIN ของพนักงานแต่ละคนตามปกติในครั้งถัดๆ ไป (เหมือนเครื่องแรก)
 window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppliedEmail = null) {
   try {
     const accountId = String(localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
@@ -198,9 +176,6 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppl
     const client = getSupabaseClient();
     if (!client) return { ok: false, reason: 'cloud_not_configured' };
 
-    // IMPORTANT: if the owner is already authenticated, reuse the persisted
-    // Supabase session. Never ask for the password or sign in again on every
-    // POS start/action. Supabase Auth refreshes the session automatically.
     const existing = await client.auth.getSession();
     const existingUser = existing?.data?.session?.user || null;
     if (existingUser?.id) {
@@ -219,7 +194,6 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppl
       }
     }
 
-    // No usable remembered session: only now is a password required.
     if (!password) return { ok: false, reason: 'missing_credentials' };
     const email = String(suppliedEmail || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL') || '').trim().toLowerCase();
     if (!email) return { ok: false, reason: 'missing_email' };
@@ -238,7 +212,6 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppl
       return { ok: true, user: result.data.user, session: result.data.session };
     }
 
-    // ถ้ายังไม่เคยสร้าง Auth ใน Project นี้ ให้สร้างครั้งแรก
     const signUp = await client.auth.signUp({
       email,
       password,
@@ -259,13 +232,6 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppl
   }
 };
 
-
-// ============================================================
-// REMEMBERED SUPABASE SESSION
-// Never stores a password. Supabase persists/refreshes the Auth
-// session in the browser. On reload, restore the matching local
-// POS user from the active Auth session.
-// ============================================================
 window.restoreRememberedSupabaseLogin = async function () {
   try {
     const ready = await window.ensureSupabaseClientReady({ requireSession:false });
@@ -347,7 +313,6 @@ window.provisionStoreMemberAuth = async function(email, password, role='staff') 
   const ownerClient = getSupabaseClient();
   const { data: current } = await ownerClient.auth.getUser();
   if (!current?.user) throw new Error('ต้องเข้าสู่ระบบเจ้าของร้านก่อนเพิ่มสมาชิก');
-  const ownerSession = (await ownerClient.auth.getSession()).data?.session;
   const temp = window.supabase.createClient(getConfiguredSupabaseUrl(), getConfiguredSupabaseAnonKey(), { auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false} });
   const signUp = await temp.auth.signUp({ email, password, options:{ data:{ display_name: email.split('@')[0] } } });
   if (signUp.error) throw signUp.error;
@@ -355,7 +320,6 @@ window.provisionStoreMemberAuth = async function(email, password, role='staff') 
   if (!memberId) throw new Error('Supabase ไม่คืนรหัสสมาชิก');
   const { error: addErr } = await ownerClient.rpc('add_store_member', { p_user_id: memberId, p_role: role === 'manager' ? 'manager' : 'staff' });
   if (addErr) throw addErr;
-  // The temporary client never persists the member session; the owner session remains intact.
   return { ok:true, userId:memberId, email };
 };
 
@@ -365,8 +329,6 @@ window.processSaleAtomicOnline = async function(payload) {
   if (error) throw error;
   return data;
 };
-
-
 
 window.loadCodeConfigIntoForm = function () {
   ['customer', 'supplier', 'category'].forEach(type => {
@@ -422,7 +384,6 @@ function resolveSupabaseConfig() {
   let url = getConfiguredSupabaseUrl(accountId);
   let key = getConfiguredSupabaseAnonKey(accountId);
 
-  // Accept config already exposed by the host page/app shell, but never a secret key.
   if ((!url || !key) && window.SMARTPOS_SUPABASE_CONFIG) {
     url = url || String(window.SMARTPOS_SUPABASE_CONFIG.url || '').trim();
     key = key || String(window.SMARTPOS_SUPABASE_CONFIG.anonKey || '').trim();
@@ -522,35 +483,25 @@ window.refreshSupabaseSession = async function () {
   } catch (e) { return { ok:false, reason:e?.message || 'refresh_failed' }; }
 };
 
-// Boot once per page. This does NOT sign in, ask for a password, or contact a
-// different project. It only restores the persisted Supabase session for the
-// already configured store.
 window.initSupabaseAuth = async function () {
   return window.ensureSupabaseClientReady({ requireSession:false });
 };
 
-// Initialize after the Supabase CDN is available and after localStorage is ready.
 (function bootSupabaseAuth() {
   const run = () => { try { window.initSupabaseAuth(); } catch (_) {} };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once:true });
   else run();
 })();
 
-// ------------------------------------------
-// DECOUPLED SYNC & GRANULAR RELATIONAL TABLE SUPPORT
-// ------------------------------------------
-// Allows syncing specific modules to their own respective database tables in Supabase 
-// without needing to rewrite the entire JSON state bloat on every transaction.
 window.syncGranularTablesToSupabase = async function (domain) {
     const client = getSupabaseClient();
     if (!client || !window.db) return false;
 
     try {
         if (domain === 'products') {
-            await window.syncProductsToSupabase(true); // Call existing quiet mode sync
+            await window.syncProductsToSupabase(true);
         } 
         else if (domain === 'bills') {
-            // Find bills that haven't been successfully synced yet
             const unSyncedBills = window.db.bills.filter(b => !b.supabaseSynced);
             if (unSyncedBills.length === 0) return true;
 
@@ -612,7 +563,6 @@ window.syncGranularTablesToSupabase = async function (domain) {
              unSyncedShifts.forEach(s => s.supabaseSynced = true);
              if (typeof window.persist === 'function') window.persist();
         }
-        
         return true;
     } catch (err) {
         console.error(`Granular sync failed for domain [${domain}]:`, err);
@@ -621,25 +571,18 @@ window.syncGranularTablesToSupabase = async function (domain) {
 };
 
 window.decoupledPersist = function(domains = []) {
-    // 1. Immediately persist local state (Storage)
     if (typeof window.persist === 'function') {
         window.persist();
     }
-    
-    // 2. Perform decoupled async sync for granular relational tables
     if (domains && domains.length > 0) {
         domains.forEach(domain => {
             window.syncGranularTablesToSupabase(domain);
         });
     } else {
-        // Fallback: sync all known modular tables if none specified
         ['bills', 'cash_ledger', 'shifts'].forEach(d => window.syncGranularTablesToSupabase(d));
     }
 };
 
-// ------------------------------------------
-// PUSH PRODUCTS TO SUPABASE (Granular)
-// ------------------------------------------
 window.syncProductsToSupabase = async function (isQuiet = false) {
   if (typeof window.guardOnce === 'function' && !window.guardOnce('syncProductsToSupabase')) return;
 
@@ -744,14 +687,10 @@ window.syncProductsToSupabase = async function (isQuiet = false) {
   }
 };
 
-// Resizes + re-encodes an image file before upload so phone-camera photos
-// (often 3-8 MB each) don't balloon Storage usage. Non-image files (PDFs
-// etc.) are returned untouched. Falls back to the original file if anything
-// about compression fails, so an upload never breaks because of this step.
 window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
   return new Promise((resolve) => {
     if (!file || !file.type || !file.type.startsWith('image/') || file.type === 'image/gif') {
-      return resolve(file); // don't touch non-images or animated GIFs
+      return resolve(file);
     }
     const img = new Image();
     const objectUrl = URL.createObjectURL(file);
@@ -759,7 +698,7 @@ window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
       URL.revokeObjectURL(objectUrl);
       let { width, height } = img;
       if (width <= maxDim && height <= maxDim && file.size < 400 * 1024) {
-        return resolve(file); // already small enough, skip re-encoding
+        return resolve(file);
       }
       const scale = Math.min(1, maxDim / Math.max(width, height));
       width = Math.round(width * scale);
@@ -785,8 +724,6 @@ window.uploadProductImageToSupabase = async function (file, productId) {
     throw new Error('รูปสินค้าต้องเป็น JPG/PNG/WebP และมีขนาดไม่เกิน 5 MB');
   }
 
-  // IMPORTANT: getSupabaseClient() intentionally returns null when the current
-  // account has no saved cloud configuration. Never call .auth/.storage on null.
   const client = getSupabaseClient();
   if (!client) {
     throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูลร้านบนคลาวด์สำหรับบัญชีนี้ กรุณาเข้าสู่ระบบ/เชื่อมต่อร้านก่อนนำเข้ารูป');
@@ -811,7 +748,6 @@ window.uploadProductImageToSupabase = async function (file, productId) {
       .upload(path, compressed, { upsert: false, contentType: compressed.type || undefined });
     if (uploadError) throw uploadError;
 
-    // Signed URL is only for display; path is the durable value saved to the product.
     const { data, error } = await client.storage.from('product-images').createSignedUrl(path, 3600);
     if (error) throw error;
     return { url: data?.signedUrl || '', path };
@@ -849,20 +785,12 @@ window.handleProductImageUpload = async function (event) {
   }
 };
 
-// ==========================================
-// PRODUCT IMAGE CACHE
-// เก็บ Blob ตาม storage path ถาวร; Signed URL ใช้เป็นเพียงช่องทางดาวน์โหลด
-// ==========================================
 const PRODUCT_IMAGE_CACHE_NAME='smartpos-product-images-v1';
 function productImageCacheKey(path){const store=String(localStorage.getItem('POS_STORE_ID')||'local').trim().toLowerCase();return `https://smartpos.local/cache/${encodeURIComponent(store)}/${encodeURIComponent(String(path||''))}`;}
 window.cacheProductImage=async function(path,signedUrl){try{if(!path||!signedUrl||!('caches'in window))return false;const r=await fetch(signedUrl,{cache:'no-store'});if(!r.ok)return false;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME);await c.put(productImageCacheKey(path),new Response(await r.blob(),{headers:{'Content-Type':r.headers.get('Content-Type')||'image/jpeg'}}));return true;}catch(_){return false;}};
 window.getCachedProductImage=async function(path){try{if(!path||!('caches'in window))return null;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME),r=await c.match(productImageCacheKey(path));if(!r)return null;return URL.createObjectURL(await r.blob());}catch(_){return null;}};
 window.clearProductImageCache=async function(){try{if('caches'in window)await caches.delete(PRODUCT_IMAGE_CACHE_NAME);}catch(_){}};
 
-// ==========================================
-// PRIVATE STORAGE URL REFRESH
-// Signed URLs are never persisted as the security credential. Only storage paths are durable.
-// ==========================================
 window.__lastStorageUrlRefreshAt = 0;
 window.refreshProductImageUrl = async function (productId, preferCache = true) {
   try {
@@ -875,7 +803,8 @@ window.refreshProductImageUrl = async function (productId, preferCache = true) {
     await window.cacheProductImage?.(p.imageStoragePath,data.signedUrl);
     return true;
   } catch(e){console.warn('Product image URL refresh failed:',e);return false;}
-};window.refreshPrivateStorageUrls = async function (force = false) {
+};
+window.refreshPrivateStorageUrls = async function (force = false) {
   try {
     const products=Object.values(db.products||{}).filter(p=>p.imageStoragePath);
     const missing=[];
@@ -896,13 +825,11 @@ window.refreshProductImageUrl = async function (productId, preferCache = true) {
     }else{for(const p of missing)await window.refreshProductImageUrl(p.id,false);}
     if(window.persist)window.persist();return true;
   }catch(e){console.warn('Storage URL refresh skipped:',e);return false;}
-};// ==========================================
-// AUTOMATIC FULL-STATE SYNC (With OCC Conflict Check)
-// ==========================================
+};
+
 const POS_STATE_ROW_ID = 'main';
 const LAST_SYNCED_KEY = 'pos_last_synced_at';
 
-// Debounce Global state sync
 let _pushDebounceTimer = null;
 const _originalPersistForSync = window.persist;
 window.persist = function (...args) {
@@ -916,32 +843,6 @@ window.persist = function (...args) {
   return result;
 };
 
-// ==========================================
-// SAFE MERGE ENGINE FOR SYNC CONFLICTS
-// ==========================================
-// Replaces "abort or Force Sync (overwrite the whole remote db)" with a
-// per-record merge, so a conflict between two devices/staff sessions can no
-// longer silently delete data the other side already saved. This matters even
-// more now that staff can legitimately work "offline" on a device that hasn't
-// re-authenticated to Supabase yet (see submitAccountLogin) — their changes
-// need to merge cleanly once the owner reconnects, not get wiped.
-//
-// Merge rules per top-level key in `db` (see DB_DEFAULT above):
-//  - Array-of-records keyed by `id` (bills, shifts, cashLedger, categories,
-//    users, pendingSyncs, pos, documents): union by id. Identical content on
-//    both sides -> keep one copy. Same id, DIFFERENT content -> keep BOTH;
-//    the local record is kept under a renamed id (`<id>-conflict-<ts>`,
-//    flagged `_mergeConflict:true` / `_originalId`) so nothing is ever
-//    silently discarded.
-//  - Dictionary-of-records keyed by object key (products, customers,
-//    suppliers): same by-key union + rename-on-conflict rule.
-//  - counters: take the MAX of local vs remote per counter, so an id either
-//    device already issued is never reused after the merge.
-//  - Everything else (storeName, settings, security/PIN state, promptPayId,
-//    schemaVersion, codeConfig, currentShift, ...): singleton config, not
-//    meaningfully mergeable field-by-field -> remote wins (it's the side
-//    that triggered the conflict). Local's own copy is preserved in the
-//    pre-merge backup snapshot taken in applyMergedStateAndPush below.
 window.mergeDbStates = function (localDb, remoteDb) {
   const conflicts = [];
   const merged = {};
@@ -953,26 +854,17 @@ window.mergeDbStates = function (localDb, remoteDb) {
     try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
   }
 
-  // ⚠️ เวอร์ชันก่อนหน้าตรงนี้เคย "duplicate เป็นเรคคอร์ดใหม่" ทุกครั้งที่ id เดียวกันมีเนื้อหาต่าง
-  // กัน — ฟังดูปลอดภัย แต่ในทางปฏิบัติ field อย่าง "สต็อกสินค้า" เปลี่ยนแทบทุกครั้งที่มีการขาย
-  // พอ 2 เครื่อง sync ชนกันบ่อยๆ (เรื่องปกติเวลามีหลายเครื่องขายพร้อมกัน) สินค้า 1 รายการเดิม
-  // จะถูกโคลนซ้ำไปเรื่อยๆ ทุกครั้งที่ conflict เกิด — สินค้าจริง ~2,000 รายการ กลายเป็นหลักหมื่น
-  // รายการได้ในเวลาไม่นาน นี่คือสาเหตุของปัญหาที่เจอ แก้เป็น "remote wins" สำหรับ record เดิมที่
-  // มีอยู่แล้วทั้งสองฝั่งแทน (ไม่สร้างซ้ำอีกต่อไป) ส่วน record ที่มีอยู่แค่ฝั่งเดียว (สินค้า/บิลใหม่ที่
-  // เพิ่งสร้าง ยังไม่เคย sync) ยังคงถูก union เข้ามาตามปกติ ปลอดภัยเหมือนเดิม ไม่มีการลบข้อมูลจริง
-  // ที่ต่างกันแค่ไม่ union สอง version เข้าด้วยกันแบบสร้างแถวใหม่อีกต่อไป
   function mergeArrayCollection(key, localArr, remoteArr) {
     localArr = Array.isArray(localArr) ? localArr : [];
     remoteArr = Array.isArray(remoteArr) ? remoteArr : [];
     const byId = new Map();
     remoteArr.forEach(rec => { if (rec && rec.id != null) byId.set(rec.id, rec); });
     localArr.forEach(rec => {
-      if (!rec || rec.id == null) return; // skip malformed records rather than crash the merge
-      if (!byId.has(rec.id)) { byId.set(rec.id, rec); return; } // only exists locally -> keep it (union)
+      if (!rec || rec.id == null) return;
+      if (!byId.has(rec.id)) { byId.set(rec.id, rec); return; }
       const remoteRec = byId.get(rec.id);
-      if (sameContent(rec, remoteRec)) return; // identical both sides, nothing to do
-      // มีอยู่ทั้งสองฝั่งแต่เนื้อหาต่างกัน -> ใช้ฝั่ง remote (ไม่ duplicate) แค่บันทึกไว้ให้ตรวจสอบ
-      conflicts.push({ collection: key, id: rec.id, note: 'ใช้ข้อมูลฝั่ง remote (ค่าบางฟิลด์ เช่น สต็อก ต่างกันระหว่างสองเครื่อง)' });
+      if (sameContent(rec, remoteRec)) return;
+      conflicts.push({ collection: key, id: rec.id, note: 'ใช้ข้อมูลฝั่ง remote' });
     });
     return Array.from(byId.values());
   }
@@ -983,10 +875,9 @@ window.mergeDbStates = function (localDb, remoteDb) {
     const out = { ...remoteDict };
     Object.keys(localDict).forEach(id => {
       const localRec = localDict[id];
-      if (!(id in out)) { out[id] = localRec; return; } // only exists locally -> keep it (union)
+      if (!(id in out)) { out[id] = localRec; return; }
       if (sameContent(localRec, out[id])) return;
-      conflicts.push({ collection: key, id, note: 'ใช้ข้อมูลฝั่ง remote (ค่าบางฟิลด์ เช่น สต็อก ต่างกันระหว่างสองเครื่อง)' });
-      // out[id] คือฝั่ง remote อยู่แล้ว ไม่ต้องทำอะไรเพิ่ม (ไม่ทับด้วย localRec, ไม่สร้างซ้ำ)
+      conflicts.push({ collection: key, id, note: 'ใช้ข้อมูลฝั่ง remote' });
     });
     return out;
   }
@@ -1010,7 +901,7 @@ window.mergeDbStates = function (localDb, remoteDb) {
         if (typeof lv === 'number' && typeof rv === 'number') {
           mergedCounters[ck] = Math.max(lv, rv);
         } else {
-          mergedCounters[ck] = (rv !== undefined) ? rv : lv; // e.g. lastBillDate string -> remote wins
+          mergedCounters[ck] = (rv !== undefined) ? rv : lv;
         }
       });
       merged[key] = mergedCounters;
@@ -1022,17 +913,10 @@ window.mergeDbStates = function (localDb, remoteDb) {
   return { merged, conflicts };
 };
 
-// Applies a merged db locally (with a safety backup first), persists it, then
-// pushes it up as the new authoritative remote state. If anything throws at
-// any point, the merge attempt simply fails and the caller falls back to the
-// old manual Force Sync flow — the original local db is never left corrupted.
 window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
   try {
     const pf = window.__pushFailState || {};
     const skipBackupDownload = pf.lastBackupAt && (Date.now() - pf.lastBackupAt < 5 * 60 * 1000);
-    // ถ้าเพิ่งดาวน์โหลด backup ไปเมื่อไม่ถึง 5 นาทีที่แล้ว (เช่นกำลังวน retry ซ้ำๆ จากปัญหาเดิม)
-    // ไม่ต้องเด้งหน้าต่างดาวน์โหลดไฟล์ซ้ำรัวๆ ให้รำคาญ — in-app snapshot ยังทำทุกครั้งอยู่ดี
-    // (เบากว่า ไม่รบกวนผู้ใช้)
     if (!skipBackupDownload && typeof window.downloadJSONFile === 'function') {
       window.downloadJSONFile(db, 'PreMerge_Safety');
       if (window.__pushFailState) window.__pushFailState.lastBackupAt = Date.now();
@@ -1049,44 +933,19 @@ window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
     if (typeof updateShiftUI === 'function') updateShiftUI();
     if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
 
-    if (conflicts && conflicts.length > 0) {
-      try { localStorage.setItem('pos_last_merge_conflicts', JSON.stringify({ time: new Date().toISOString(), conflicts })); } catch (e) {}
-      if (typeof window.logSystemError === 'function') {
-        window.logSystemError('SYNC_MERGE_CONFLICTS', `พบ ${conflicts.length} รายการที่ค่าบางฟิลด์ต่างกันระหว่างสองเครื่อง (ใช้ค่าฝั่ง remote)`, JSON.stringify(conflicts).slice(0, 1000));
-      }
-      // ไม่ต้องรบกวนผู้ใช้ด้วย alert ทุกครั้งที่เจอความต่างเล็กๆ (เช่น สต็อกไม่ตรงกันเพราะขายคนละ
-      // รอบ) เพราะเกิดขึ้นเป็นปกติเวลามีหลายเครื่องขายพร้อมกัน — log ไว้เงียบๆ ให้ตรวจสอบทีหลังพอ
-      // (ดูได้ที่ 🚨 บันทึกข้อผิดพลาดของระบบ หรือ localStorage key 'pos_last_merge_conflicts')
-    }
-
     const pushed = await window.pushFullStateToSupabaseSafe(true);
     return pushed;
   } catch (err) {
     console.error("[Merge Engine] Failed to apply merged state:", err);
-    if (typeof window.logSystemError === 'function') {
-      window.logSystemError('MERGE_APPLY_FAILED', err.message, err.stack);
-    }
     return false;
   }
 };
 
-// Safe Push Function with Optimistic Concurrency Control (OCC)
-// ==========================================
-// PUSH FAILURE BACKOFF (กันลูปยิงซ้ำไม่หยุด)
-// ==========================================
-// ปัญหาที่เจอ: ถ้า push ล้มเหลว (เช่น "TypeError: Load failed" ตอนข้อมูลก้อนใหญ่เกินไป)
-// applyMergedStateAndPush จะเรียก persist() ซึ่งไปตั้ง debounce timer ให้ push รอบใหม่อัตโนมัติ
-// อีก 2.5 วิ — ถ้าสาเหตุที่แท้จริงยังไม่หาย (เช่น payload ใหญ่เกิน) รอบใหม่ก็จะล้มเหลวซ้ำ แล้ว
-// เรียก persist() อีก วนแบบนี้ไม่จบ ผลคือ error log/หน้าต่างดาวน์โหลด backup/popup "Data Conflict"
-// เด้งรัวๆ ทุก 2-3 วินาทีไม่หยุดตามที่เจอในรายงานปัญหา
-// ทางแก้: ใส่ cooldown แบบ exponential backoff หลัง push ล้มเหลว และจำกัดไม่ให้ backup/dialog
-// เด้งซ้ำถี่เกินไปในช่วง cooldown เดียวกัน
 window.__pushFailState = { failCount: 0, cooldownUntil: 0, lastDialogAt: 0, lastBackupAt: 0 };
 
 window.pushFullStateToSupabaseSafe = async function (force = false) {
   const pf = window.__pushFailState;
   if (!force && Date.now() < pf.cooldownUntil) {
-    // ยังอยู่ในช่วง cooldown จากความล้มเหลวรอบก่อน ข้ามเงียบๆ ไม่ยิง network ซ้ำ ไม่ log ซ้ำ
     return false;
   }
   try {
@@ -1094,39 +953,17 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
     const client = getSupabaseClient();
     if (!client) return false;
 
-    // เช็ค session ก่อนเสมอ (อ่านจากหน่วยความจำ/localStorage ไม่ยิง network) — ถ้ายังไม่มี
-    // session เลย (เช่น พนักงานทำงานแบบออฟไลน์ตามที่ระบบอนุญาตไว้ตอน login) ให้ออกจากฟังก์ชัน
-    // เงียบๆ ทันที ไม่ยิง network เปล่าประโยชน์ (ฟังก์ชันนี้ถูกเรียกทุกครั้งที่มีการบันทึกข้อมูล
-    // ผ่าน persist() debounce 2.5 วิ ถ้าไม่เช็คก่อน จะยิง request ไปเช็ค updated_at ทุกครั้งทั้งที่
-    // รู้อยู่แล้วว่าไม่มี session จะ push ไม่ได้อยู่ดี) และไม่ log เป็น error เพราะสถานะนี้ไม่ใช่
-    // ข้อผิดพลาด เป็นสถานะที่ตั้งใจให้เกิดได้ตามปกติ — เดิมเคย log 'PUSH_FAILED' ทุกครั้งที่พนักงาน
-    // ออฟไลน์บันทึกอะไรสักอย่าง ทำให้ error log เต็มไปด้วยข้อความที่ไม่ใช่ error จริง จน error จริงๆ
-    // ที่ควรเห็นถูกกลบหายไป
     const { data: sessionData } = await client.auth.getSession();
     if (!sessionData?.session) {
       updateSyncStatusBadge('offline', null);
       return false;
     }
 
-    // เช็คขนาดข้อมูลก่อน push เสมอ — ระบบ full-state sync ส่งฐานข้อมูลทั้งก้อนทุกครั้ง ถ้าร้าน
-    // มีสินค้า/รูปเยอะมาก (เช่นหลายพันรายการ) payload อาจใหญ่จนเบราว์เซอร์/เน็ตมือถือส่งไม่สำเร็จ
-    // (fetch ล้มเหลวแบบ "TypeError: Load failed") ถ้าไม่เช็คก่อน ระบบจะพยายามซ้ำไม่รู้จบ
     let payloadSizeMB = 0;
     try { payloadSizeMB = new Blob([JSON.stringify(db)]).size / (1024 * 1024); } catch (e) {}
     if (payloadSizeMB > 8) {
       pf.failCount++;
-      pf.cooldownUntil = Date.now() + 10 * 60 * 1000; // ข้อมูลใหญ่เกินไป ไม่มีประโยชน์จะลองถี่ๆ รอ 10 นาที
-      if (typeof window.logSystemError === 'function') {
-        window.logSystemError('PUSH_PAYLOAD_TOO_LARGE', `ขนาดข้อมูล ~${payloadSizeMB.toFixed(1)}MB ใหญ่เกินกว่าจะ sync แบบ full-state ได้อย่างเสถียร`);
-      }
-      if (Date.now() - pf.lastDialogAt > 5 * 60 * 1000 && typeof window.showAlert === 'function') {
-        pf.lastDialogAt = Date.now();
-        window.showAlert(
-          "⚠️ ข้อมูลใหญ่เกินกว่าจะซิงค์ได้",
-          `ฐานข้อมูลตอนนี้มีขนาดประมาณ ${payloadSizeMB.toFixed(1)} MB ใหญ่เกินกว่าระบบซิงค์แบบปัจจุบันจะส่งได้เสถียร มักเกิดจากมีสินค้าซ้ำซ้อนสะสมอยู่มาก\n\nแนะนำ: ไปที่หน้าคลังสินค้า กด "🧬 ล้างสินค้าซ้ำ" ก่อน แล้วลองซิงค์ใหม่อีกครั้ง`,
-          true
-        );
-      }
+      pf.cooldownUntil = Date.now() + 10 * 60 * 1000;
       return false;
     }
 
@@ -1145,21 +982,6 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
         const localKnownTime = lastKnownSync ? new Date(lastKnownSync).getTime() : 0;
 
         if (remoteTime > localKnownTime + 1000) {
-          console.warn("[Conflict Engine] Supabase has newer state. Attempting automatic per-record merge instead of a blind overwrite.");
-
-          if (typeof window.logSystemError === 'function') {
-            window.logSystemError('SYNC_CONFLICT', `Remote updated at ${remoteData.updated_at}, local known was ${lastKnownSync}`);
-          }
-
-          updateSyncStatusBadge('offline', null);
-
-          // Try to resolve automatically via the merge engine first. This can only
-          // ADD data (union of both sides, conflicting records kept as flagged
-          // duplicates) — it never deletes anything either side already had, so
-          // it's safe to attempt without asking. If fetching/merging fails for any
-          // reason (including the remote row belonging to a different Supabase
-          // Auth account, which must never be merged in), fall through to the
-          // original manual Force-Sync-or-abort dialog.
           try {
             const { data: authCheck } = await client.auth.getUser();
             const { data: fullRemote, error: fullFetchErr } = await client
@@ -1168,30 +990,22 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
               .eq('id', POS_STATE_ROW_ID)
               .maybeSingle();
 
-            if (fullFetchErr || !fullRemote || !fullRemote.data) throw new Error('ไม่สามารถดึงข้อมูลฉบับเต็มจาก Supabase เพื่อนำมารวมได้');
+            if (fullFetchErr || !fullRemote || !fullRemote.data) throw new Error('ไม่สามารถดึงข้อมูลจาก Supabase');
             if (fullRemote.owner_id && authCheck?.user?.id && fullRemote.owner_id !== authCheck.user.id) {
-              throw new Error('ข้อมูลใน Supabase เป็นของบัญชีอื่น ไม่สามารถรวมข้อมูลอัตโนมัติได้');
+              throw new Error('ข้อมูลใน Supabase เป็นของบัญชีอื่น');
             }
 
             const { merged, conflicts } = window.mergeDbStates(db, fullRemote.data);
             const pushed = await window.applyMergedStateAndPush(merged, conflicts);
             if (pushed) return true;
-            throw new Error('รวมข้อมูลสำเร็จแต่ push ขึ้น Supabase ไม่สำเร็จ');
           } catch (mergeErr) {
-            console.error("[Conflict Engine] Automatic merge failed, falling back to manual Force Sync prompt:", mergeErr);
-            if (typeof window.logSystemError === 'function') {
-              window.logSystemError('SYNC_MERGE_FAILED', mergeErr.message, mergeErr.stack);
-            }
+            console.error("[Conflict Engine] Automatic merge failed:", mergeErr);
           }
 
           if (Date.now() - pf.lastDialogAt < 60 * 1000) return false;
           pf.lastDialogAt = Date.now();
           if (typeof window.showAlert === 'function') {
-            window.showAlert(
-              "⚠️ พบข้อมูลขัดแย้ง",
-              "ระบบรวมข้อมูลอัตโนมัติไม่สำเร็จ จึงหยุดการส่งข้อมูลเพื่อป้องกันการเขียนทับข้อมูลของอีกเครื่อง กรุณาตรวจสอบการเชื่อมต่อแล้วลองทำรายการใหม่",
-              true
-            );
+            window.showAlert("⚠️ พบข้อมูลขัดแย้ง", "ระบบรวมข้อมูลอัตโนมัติไม่สำเร็จ", true);
           }
           return false;
         }
@@ -1200,15 +1014,10 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
 
     const { data: authData } = await client.auth.getUser();
     const authUserId = authData?.user?.id || null;
-    if (!authUserId) throw new Error('ยังไม่มี Supabase Auth session จึงไม่อนุญาตให้ซิงค์ข้อมูล');
+    if (!authUserId) throw new Error('ไม่มี Auth session');
 
+    // ไม่ล้าง imageUrl เป็นค่าว่าง เพื่อป้องกันรูปสินค้าหายเมื่อซิงค์กับ Supabase
     const stateForRemote = JSON.parse(JSON.stringify(db));
-    Object.values(stateForRemote.products || {}).forEach(p => {
-      if (p.imageStoragePath) p.imageUrl = '';
-    });
-    (stateForRemote.documents || []).forEach(d => {
-      if (d.fileStoragePath) d.fileUrl = '';
-    });
 
     const { error: upsertErr } = await client
       .from('pos_state')
@@ -1225,20 +1034,12 @@ window.pushFullStateToSupabaseSafe = async function (force = false) {
     console.error("[Conflict Engine] Push failed:", err);
     updateSyncStatusBadge('offline', null);
     pf.failCount = Math.min(pf.failCount + 1, 6);
-    pf.cooldownUntil = Date.now() + Math.min(10 * Math.pow(2, pf.failCount), 300) * 1000; // 10s, 20s, 40s... สูงสุด 5 นาที
-    if (typeof window.logSystemError === 'function') {
-      window.logSystemError('PUSH_FAILED', err.message, err.stack);
-    }
+    pf.cooldownUntil = Date.now() + Math.min(10 * Math.pow(2, pf.failCount), 300) * 1000;
     return false;
   }
 };
 
 async function checkAndPullNewerStateOnStartup() {
-  const withTimeout = (promise, ms) => Promise.race([
-    promise,
-    new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), ms))
-  ]);
-
   try {
     const client = getSupabaseClient();
     if (!client) {
@@ -1251,37 +1052,20 @@ async function checkAndPullNewerStateOnStartup() {
       return;
     }
 
-    const result = await withTimeout(
-      client.from('pos_state').select('data, updated_at, owner_id').eq('id', POS_STATE_ROW_ID).maybeSingle(),
-      6000
-    );
+    const { data, error } = await client.from('pos_state').select('data, updated_at, owner_id').eq('id', POS_STATE_ROW_ID).maybeSingle();
 
-    if (result.timedOut) {
-      updateSyncStatusBadge('offline', null);
-      return;
-    }
-
-    const { data, error } = result;
     if (error || !data) {
-      updateSyncStatusBadge(data ? 'synced' : 'never', null);
+      updateSyncStatusBadge('never', null);
       return;
-    }
-
-    const { data: currentAuth } = await client.auth.getUser();
-    if (data.owner_id && currentAuth?.user?.id && data.owner_id !== currentAuth.user.id) {
-      throw new Error('ข้อมูลในฐานข้อมูลนี้เป็นของบัญชี Supabase อื่น');
     }
 
     const lastKnownSync = localStorage.getItem(LAST_SYNCED_KEY);
     if (lastKnownSync && new Date(data.updated_at) <= new Date(lastKnownSync)) {
       updateSyncStatusBadge('synced', data.updated_at);
+      await window.refreshPrivateStorageUrls();
       return;
     }
 
-    if (typeof window.runMigrations === 'function') await window.runMigrations(data.data);
-    if (typeof window.autoRepairIfNeeded === 'function') await window.autoRepairIfNeeded(data.data);
-    
-    // Explicit global reassignment
     window.db = data.data;
     if (typeof db !== 'undefined') { db = window.db; }
     
@@ -1292,17 +1076,6 @@ async function checkAndPullNewerStateOnStartup() {
     if (typeof renderAll === 'function') renderAll();
     if (typeof updateShiftUI === 'function') updateShiftUI();
     if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
-    if (typeof checkStorageQuota === 'function') checkStorageQuota();
-
-    // หมายเหตุสำคัญ: ตรงนี้เคยมีโค้ดที่พยายาม "auto-unlock" หน้าจอ PIN โดยหา user ใน db.users
-    // ที่ id ตรงกับ POS_ACCOUNT_ID แล้วเซ็ต currentUserId/currentUserName ทับ — เป็นโค้ดตกค้างจาก
-    // สถาปัตยกรรมเก่าที่ POS_ACCOUNT_ID เคยหมายถึง "พนักงานที่ login อยู่ตอนนี้" (ก่อนจะแก้เป็น
-    // หมายถึง "ร้าน/บัญชีของเครื่องนี้" ซึ่งปกติคือ id ของเจ้าของร้าน) ผลคือทุกครั้งที่ฟังก์ชันนี้ถูก
-    // เรียกหลัง login สำเร็จ (จุดเรียกเดียวคือใน submitAccountLogin หลังยืนยัน PIN ถูกต้องแล้ว)
-    // มันจะเงียบๆ สลับตัวตนที่ใช้บันทึกลง audit log/ใบเสร็จกลับไปเป็น "เจ้าของร้าน" เสมอ ไม่ว่า
-    // พนักงานคนไหนเพิ่ง login จริงก็ตาม — ทำให้ระบบบันทึกผิดคนว่าใครทำรายการขาย/เปิดกะ ฯลฯ ตัด
-    // ออกทั้งบล็อกเพราะไม่จำเป็น (หน้าจอ PIN ถูกซ่อนและ currentUserId ถูกตั้งค่าถูกต้องแล้วใน
-    // submitAccountLogin ก่อนจะเรียกฟังก์ชันนี้เสมอ)
   } catch (err) {
     console.error("Startup sync check failed:", err);
     updateSyncStatusBadge('offline', null);
@@ -1317,19 +1090,16 @@ function updateSyncStatusBadge(state, timestamp) {
     el.title = timestamp ? `อัปเดตล่าสุด: ${new Date(timestamp).toLocaleString('th-TH')}` : '';
   } else if (state === 'offline') {
     el.innerText = '🔴 ออฟไลน์/ขัดแย้ง';
-    el.title = 'เชื่อมต่อ Supabase ไม่ได้ หรือพบการชนกันของข้อมูล';
   } else if (state === 'never') {
     el.innerText = '⚪ ยังไม่เคยซิงค์';
   }
 }
 window.updateSyncStatusBadge = updateSyncStatusBadge;
 
-
 window.addEventListener('DOMContentLoaded', async () => {
   try {
     const hasAccount = !!localStorage.getItem('POS_ACCOUNT_ID');
     const hasSupabaseConfig = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
-    // ห้ามดึงข้อมูล remote ตอน startup ก่อน Login/Auth สำเร็จ
     if (hasAccount && hasSupabaseConfig) updateSyncStatusBadge('never', null);
     else updateSyncStatusBadge('never', null);
   } finally {
@@ -1338,9 +1108,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ==========================================
-// AUDIT LOG → SUPABASE (APPEND-ONLY SECURITY CHECK)
-// ==========================================
 const _originalLogTransactionForSync = window.logTransaction;
 window.logTransaction = async function (action, details = {}, opts = {}) {
   const entry = _originalLogTransactionForSync ? await _originalLogTransactionForSync(action, details, opts) : null;
@@ -1350,7 +1117,6 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
     const deviceBadge = document.getElementById('device-id-badge');
     const deviceId = (deviceBadge?.innerText || '').replace('DEVICE: ', '').trim() || window.__deviceId || null;
     
-    // Strict append-only insert; actor identity comes from Supabase Auth, not browser payload.
     const authUser = (await getSupabaseClient().auth.getUser()).data?.user;
     getSupabaseClient().from('audit_log').insert([{
       id: entry.id,
@@ -1363,7 +1129,7 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
       device_id: deviceId
     }]).then(({ error }) => {
       if (error) {
-         console.warn("Audit log append-only push failed (Check network/RLS policies):", error);
+         console.warn("Audit log append-only push failed:", error);
       }
     }).catch(err => console.error("Audit log network err:", err));
   } catch (e) {}
@@ -1371,4 +1137,11 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
   return entry;
 };
 
-window.signOutSupabaseOnly=async function(){try{if(_supabaseClient)await _supabaseClient.auth.signOut();}catch(_){} _supabaseClient=null; _supabaseAuthSubscription=null; window.POS_SUPABASE_SESSION=null; window.POS_SUPABASE_AUTH_STATE='SIGNED_OUT';};
+window.signOutSupabaseOnly = async function() {
+  try { if(_supabaseClient) await _supabaseClient.auth.signOut(); } catch(_) {}
+  _supabaseClient = null;
+  _supabaseAuthSubscription = null;
+  window.POS_SUPABASE_SESSION = null;
+  window.POS_SUPABASE_AUTH_STATE = 'SIGNED_OUT';
+};
+

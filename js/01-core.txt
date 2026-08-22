@@ -1,0 +1,128 @@
+/* js/part1.js */
+// ==========================================
+// SMART POS PRO — PART 1 (Fix Clear Products & Save Product Image Path)
+// ==========================================
+
+/* ระบบล้างสินค้าทั้งหมด */
+window.openClearProductsModal = function () {
+  window.openManagerPinModal(() => {
+    const input = document.getElementById('clear-products-confirm-input');
+    const btn = document.getElementById('btn-confirm-clear-products');
+
+    if (input) input.value = '';
+    if (btn) {
+      btn.disabled = true;
+      btn.className = 'flex-1 py-3 bg-slate-300 text-slate-400 rounded-xl font-bold text-xs btn-touch cursor-not-allowed transition-all';
+    }
+
+    const modal = document.getElementById('modal-clear-products');
+    if (modal) {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+  });
+};
+
+window.validateClearProductsInput = function () {
+  const input = document.getElementById('clear-products-confirm-input');
+  const btn = document.getElementById('btn-confirm-clear-products');
+  if (!input || !btn) return;
+
+  const isMatch = input.value.trim() === 'DELETE ALL PRODUCTS';
+  if (isMatch) {
+    btn.disabled = false;
+    btn.className = 'flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs btn-touch shadow-md transition-all cursor-pointer';
+  } else {
+    btn.disabled = true;
+    btn.className = 'flex-1 py-3 bg-slate-300 text-slate-400 rounded-xl font-bold text-xs btn-touch cursor-not-allowed transition-all';
+  }
+};
+
+window.executeClearAllProducts = async function () {
+  if (typeof window.guardOnce === 'function' && !window.guardOnce('executeClearAllProducts')) return;
+
+  try {
+    if (typeof downloadJSONFile === 'function') {
+      downloadJSONFile(window.db, 'Backup_Before_Clear_Products');
+    }
+    if (typeof saveInAppBackupSnapshot === 'function') {
+      await saveInAppBackupSnapshot();
+    }
+
+    const totalCount = Object.keys(window.db.products || {}).length;
+    window.db.products = {};
+    
+    if (window.db.counters) {
+      window.db.counters.product = 1;
+      window.db.counters.barcode = 1;
+      window.db.counters.variant = 1;
+    }
+
+    if (typeof invalidateBarcodeIndex === 'function') {
+      invalidateBarcodeIndex();
+    }
+    if (typeof persist === 'function') {
+      persist();
+    }
+    if (typeof renderAll === 'function') {
+      renderAll();
+    }
+
+    if (typeof window.pushFullStateToSupabaseSafe === 'function') {
+      await window.pushFullStateToSupabaseSafe(true);
+    }
+
+    window.closeModal('modal-clear-products');
+
+    if (typeof showAlert === 'function') {
+      showAlert('ล้างข้อมูลสินค้าสำเร็จ', `ลบสินค้าในระบบไปทั้งหมด ${totalCount} รายการเรียบร้อยแล้ว`, false);
+    } else if (typeof showToast === 'function') {
+      showToast(`ล้างข้อมูลสินค้า ${totalCount} รายการเรียบร้อยแล้ว`);
+    }
+  } catch (err) {
+    console.error('Clear products failed:', err);
+    if (typeof showAlert === 'function') {
+      showAlert('เกิดข้อผิดพลาด', 'ไม่สามารถล้างข้อมูลสินค้าได้: ' + (err.message || err), true);
+    }
+  }
+};
+
+/* บันทึกสินค้าพร้อมเซ็ต imageStoragePath */
+window.saveProduct = function() {
+  const idInput = document.getElementById('edit-p-id');
+  const nameInput = document.getElementById('p-name');
+  const imageUrlInput = document.getElementById('p-image-url');
+
+  const id = idInput ? idInput.value : '';
+  const name = nameInput ? nameInput.value.trim() : '';
+  if (!name) return showAlert("กรอกข้อมูลไม่ครบ", "กรุณาระบุชื่อสินค้าหลัก", true);
+
+  const imageUrl = imageUrlInput ? imageUrlInput.value.trim() : '';
+  const isEdit = !!id && !!db.products[id];
+  const prodId = isEdit ? id : 'P-' + generateID();
+
+  let imageStoragePath = db.products[prodId]?.imageStoragePath || '';
+  if (window.__pendingProductImageStoragePath) {
+    imageStoragePath = window.__pendingProductImageStoragePath;
+    window.__pendingProductImageStoragePath = null;
+  }
+
+  db.products[prodId] = {
+    id: prodId,
+    name,
+    imageUrl,
+    imageStoragePath,
+    isDeleted: false,
+    variants: db.products[prodId]?.variants || [{ id: 'V-' + generateID(), sizeName: 'ปกติ', cost: 0, price: 0, stock: 0 }]
+  };
+
+  persist();
+  closeModal('modal-product');
+  showToast(isEdit ? "บันทึกสินค้าเรียบร้อย" : "เพิ่มสินค้าเรียบร้อย");
+  renderAll();
+
+  if (typeof window.pushFullStateToSupabaseSafe === 'function') {
+    window.pushFullStateToSupabaseSafe(true);
+  }
+};
+

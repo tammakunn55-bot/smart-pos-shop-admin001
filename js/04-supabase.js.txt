@@ -1,0 +1,287 @@
+/* js/supabase-integration.js */
+// ==========================================
+// SUPABASE INTEGRATION (With Conflict Resolution, Force Sync & Granular Tables)
+// ==========================================
+
+const SUPABASE_URL_DEFAULT = "";
+const SUPABASE_ANON_KEY_DEFAULT = "";
+
+const SUPABASE_URL_STORAGE_KEY = 'pos_supabase_url';
+const SUPABASE_KEY_STORAGE_KEY = 'pos_supabase_anon_key';
+
+function getAccountScopedKey(base, accountId = null) {
+  const id = String(accountId || localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
+  return id ? `${base}::${id}` : base;
+}
+function readFirstLocalStorage(keys) {
+  for (const key of keys) {
+    try {
+      const value = String(localStorage.getItem(key) || '').trim();
+      if (value) return value;
+    } catch (e) {}
+  }
+  return '';
+}
+function getConfiguredSupabaseUrl(accountId = null) {
+  return readFirstLocalStorage([
+    getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId),
+    SUPABASE_URL_STORAGE_KEY,
+    'POS_BOUND_SUPABASE_URL'
+  ]);
+}
+function getConfiguredSupabaseAnonKey(accountId = null) {
+  return readFirstLocalStorage([
+    getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId),
+    SUPABASE_KEY_STORAGE_KEY
+  ]);
+}
+function setConfiguredSupabase(url, key, accountId = null) {
+  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), url);
+  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), key);
+  localStorage.setItem(SUPABASE_URL_STORAGE_KEY, url);
+  localStorage.setItem(SUPABASE_KEY_STORAGE_KEY, key);
+}
+
+let _supabaseClient = null;
+function getSupabaseClient() {
+  if (_supabaseClient) return _supabaseClient;
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
+    throw new Error("Supabase library not loaded");
+  }
+  _supabaseClient = window.supabase.createClient(getConfiguredSupabaseUrl(), getConfiguredSupabaseAnonKey(), { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  return _supabaseClient;
+}
+window.getSupabaseClient = getSupabaseClient;
+
+// ==========================================
+// UPLOAD PRODUCT IMAGE TO SUPABASE STORAGE
+// ==========================================
+window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!file || !file.type || !file.type.startsWith('image/') || file.type === 'image/gif') {
+      return resolve(file);
+    }
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim && file.size < 400 * 1024) {
+        return resolve(file);
+      }
+      const scale = Math.min(1, maxDim / Math.max(width, height));
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => {
+        if (!blob) return resolve(file);
+        const newName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+        resolve(new File([blob], newName, { type: 'image/jpeg' }));
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
+    img.src = objectUrl;
+  });
+};
+
+window.uploadProductImageToSupabase = async function (file, productId) {
+  if (!file) return null;
+  try {
+    const compressed = await window.compressImageFile(file);
+    const ext = compressed.name.split('.').pop();
+    const client = getSupabaseClient();
+    if (!client) throw new Error('ยังไม่ได้ตั้งค่าเชื่อมต่อ Supabase');
+    const user = (await client.auth.getUser()).data?.user;
+    if (!user) throw new Error('ต้องเข้าสู่ระบบ Supabase ก่อนอัปโหลดรูป');
+    
+    const path = `${user.id}/products/${productId}-${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await client.storage
+      .from('product-images')
+      .upload(path, compressed, { upsert: true, contentType: compressed.type || undefined });
+    if (uploadError) throw uploadError;
+
+    const { data, error } = await client.storage.from('product-images').createSignedUrl(path, 86400); // 24 hours
+    if (error) throw error;
+    return { url: data.signedUrl, path };
+  } catch (err) {
+    console.error("Image upload error:", err);
+    if (typeof showAlert === 'function') showAlert("อัปโหลดรูปไม่สำเร็จ", "เกิดข้อผิดพลาด: " + err.message, true);
+    return null;
+  }
+};
+
+window.handleProductImageUpload = async function (event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const label = document.getElementById('p-image-upload-label');
+  const originalLabel = label ? label.innerText : '';
+  if (label) label.innerText = 'กำลังอัปโหลด...';
+
+  const editIdInput = document.getElementById('edit-p-id');
+  const productId = (editIdInput ? editIdInput.value : '') || 'NEW-' + Date.now();
+  const uploadResult = await window.uploadProductImageToSupabase(file, productId);
+
+  if (label) label.innerText = originalLabel;
+  event.target.value = '';
+
+  if (uploadResult?.url && uploadResult?.path) {
+    window.__pendingProductImageStoragePath = uploadResult.path;
+    const pObj = db.products[productId];
+    if (pObj) {
+      pObj.imageStoragePath = uploadResult.path;
+      pObj.imageUrl = uploadResult.url;
+    }
+    const urlInput = document.getElementById('p-image-url');
+    if (urlInput) urlInput.value = uploadResult.url;
+    if (typeof window.previewProductImageUrl === 'function') window.previewProductImageUrl();
+    if (typeof showToast === 'function') showToast('อัปโหลดรูปสำเร็จ');
+  }
+};
+
+// ==========================================
+// REFRESH SIGNED URLS AUTOMATICALLY
+// ==========================================
+window.__lastStorageUrlRefreshAt = 0;
+window.refreshPrivateStorageUrls = async function (force = false) {
+  try {
+    if (!force && Date.now() - window.__lastStorageUrlRefreshAt < 10 * 60 * 1000) return;
+
+    const client = getSupabaseClient();
+    if (!client) return;
+    const user = (await client.auth.getUser()).data?.user;
+    if (!user) return;
+
+    window.__lastStorageUrlRefreshAt = Date.now();
+
+    const products = Object.values(db.products || {}).filter(p => p.imageStoragePath && p.imageStoragePath.startsWith(user.id + '/'));
+    const productPaths = products.map(p => p.imageStoragePath);
+    if (productPaths.length > 0) {
+      if (typeof client.storage.from('product-images').createSignedUrls === 'function') {
+        const CHUNK = 500;
+        for (let i = 0; i < productPaths.length; i += CHUNK) {
+          const chunkPaths = productPaths.slice(i, i + CHUNK);
+          const { data, error } = await client.storage.from('product-images').createSignedUrls(chunkPaths, 86400);
+          if (!error && Array.isArray(data)) {
+            data.forEach((r, idx) => {
+              if (r?.signedUrl && products[i + idx]) {
+                products[i + idx].imageUrl = r.signedUrl;
+              }
+            });
+          }
+        }
+      }
+    }
+    if (typeof persist === 'function') persist();
+  } catch (e) {
+    console.warn('Private storage URL refresh skipped:', e);
+  }
+};
+
+// ==========================================
+// AUTOMATIC FULL-STATE SYNC (PRESERVE IMAGE PATHS)
+// ==========================================
+const POS_STATE_ROW_ID = 'main';
+const LAST_SYNCED_KEY = 'pos_last_synced_at';
+
+let _pushDebounceTimer = null;
+const _originalPersistForSync = window.persist;
+window.persist = function (...args) {
+  const result = _originalPersistForSync ? _originalPersistForSync.apply(this, args) : undefined;
+  clearTimeout(_pushDebounceTimer);
+  _pushDebounceTimer = setTimeout(() => {
+    if (typeof window.pushFullStateToSupabaseSafe === 'function') {
+      window.pushFullStateToSupabaseSafe();
+    }
+  }, 2500);
+  return result;
+};
+
+window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
+  try {
+    if (typeof window.saveInAppBackupSnapshot === 'function') {
+      await window.saveInAppBackupSnapshot();
+    }
+
+    window.db = mergedDb;
+    if (typeof db !== 'undefined') { db = window.db; }
+
+    if (typeof window.persist === 'function') window.persist();
+    if (typeof renderAll === 'function') renderAll();
+
+    const pushed = await window.pushFullStateToSupabaseSafe(true);
+    return pushed;
+  } catch (err) {
+    console.error("[Merge Engine] Failed to apply merged state:", err);
+    return false;
+  }
+};
+
+window.pushFullStateToSupabaseSafe = async function (force = false) {
+  try {
+    const url = getConfiguredSupabaseUrl();
+    const key = getConfiguredSupabaseAnonKey();
+    if (!localStorage.getItem('POS_ACCOUNT_ID') || !url || !key) return false;
+    const client = getSupabaseClient();
+    if (!client) return false;
+
+    const { data: sessionData } = await client.auth.getSession();
+    if (!sessionData?.session) return false;
+
+    const nowIso = new Date().toISOString();
+    const { data: authData } = await client.auth.getUser();
+    const authUserId = authData?.user?.id || null;
+    if (!authUserId) return false;
+
+    // ส่งข้อมูลขึ้น Supabase โดยรักษา imageStoragePath และ imageUrl ไว้ครบถ้วน ไม่ลบเป็นค่าว่าง
+    const stateForRemote = JSON.parse(JSON.stringify(db));
+
+    const { error: upsertErr } = await client
+      .from('pos_state')
+      .upsert({ id: POS_STATE_ROW_ID, owner_id: authUserId, updated_by: authUserId, data: stateForRemote, updated_at: nowIso }, { onConflict: 'id' });
+
+    if (upsertErr) throw upsertErr;
+
+    localStorage.setItem(LAST_SYNCED_KEY, nowIso);
+    if (typeof updateSyncStatusBadge === 'function') updateSyncStatusBadge('synced', nowIso);
+    return true;
+  } catch (err) {
+    console.error("Push failed:", err);
+    if (typeof updateSyncStatusBadge === 'function') updateSyncStatusBadge('offline', null);
+    return false;
+  }
+};
+
+// ==========================================
+// AUDIT LOG → SUPABASE
+// ==========================================
+const _originalLogTransactionForSync = window.logTransaction;
+window.logTransaction = async function (action, details = {}, opts = {}) {
+  const entry = _originalLogTransactionForSync ? await _originalLogTransactionForSync(action, details, opts) : null;
+  if (!entry) return null;
+  
+  try {
+    const client = getSupabaseClient();
+    if (!client) return entry;
+    const authUser = (await client.auth.getUser()).data?.user;
+    
+    client.from('audit_log').insert([{
+      id: entry.id,
+      owner_id: authUser?.id || null,
+      created_by: authUser?.id || null,
+      ts: entry.ts,
+      action: entry.action,
+      actor: entry.actor,
+      details: entry.details
+    }]).then(({ error }) => {
+      if (error) console.warn("Audit log push failed:", error);
+    }).catch(err => console.error("Audit log network err:", err));
+  } catch (e) {}
+  
+  return entry;
+};
+

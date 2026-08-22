@@ -438,36 +438,6 @@ body{
           </div>
 <button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">✅ สร้างบัญชีและเริ่มทดสอบโปรแกรม</button>
 <p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">สร้างบัญชีเพื่อทดสอบได้โดยไม่ต้องมีฐานข้อมูลก่อน เมื่อพร้อมใช้งานจริงค่อยเชื่อมต่อ Supabase ของร้านตัวเอง<br/>ใช้เฉพาะ <b>anon public key</b> ห้ามใส่ service_role/secret key</p>
-<button class="w-full text-center text-[11px] text-indigo-300 underline mt-4 btn-touch" onclick="document.getElementById('setup-fresh-fields').classList.add('hidden'); document.getElementById('setup-join-fields').classList.remove('hidden');" type="button">มีร้านอยู่แล้ว? เชื่อมต่อเครื่องนี้เข้ากับฐานข้อมูลร้านเดิม</button>
-</div>
-<!-- โหมด "เชื่อมต่อร้านที่มีอยู่แล้ว" สำหรับติดตั้งบนเครื่องที่สอง/เครื่องพนักงาน โดยดึงข้อมูล
-             ร้านจริงจากคลาวด์มาใช้ แทนที่จะสร้างร้านใหม่ว่างๆ ทับ -->
-<div class="space-y-3 hidden" id="setup-join-fields">
-<div class="bg-teal-500/10 border border-teal-400/20 rounded-xl p-3 text-[10px] text-teal-200 leading-relaxed mb-1">
-            ใช้โหมดนี้เมื่อร้านมีบัญชี Supabase อยู่แล้ว (ตั้งค่าไว้จากเครื่องแรก) และต้องการให้เครื่องนี้ดึงข้อมูลร้านเดิมมาใช้ — กรอกข้อมูล Supabase และอีเมล/รหัสผ่านของ <b>เจ้าของร้าน (owner)</b> เท่านั้น
-          </div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
-<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-url" placeholder="https://xxxxx.supabase.co" type="text"/>
-</div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">anon public key</label>
-<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-key" placeholder="eyJhbGciOi..." type="text"/>
-</div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">อีเมลของเจ้าของร้าน (owner)</label>
-<input autocomplete="username" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-email" placeholder="owner@example.com" type="text"/>
-</div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่าน Supabase ของเจ้าของร้าน</label>
-<input autocomplete="current-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-password" placeholder="รหัสผ่านที่ตั้งไว้ตอนเชื่อมต่อ Supabase ครั้งแรก" type="password"/>
-</div>
-<div class="hidden text-[11px] text-red-400 font-bold text-center" id="setup-join-error"></div>
-<button class="w-full py-4 bg-teal-600 hover:bg-teal-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeJoinExistingAccount()">🔗 ดึงข้อมูลร้านเดิมมาที่เครื่องนี้</button>
-<p class="text-[10px] text-slate-500 text-center mt-1 leading-relaxed">หลังเชื่อมต่อสำเร็จ เครื่องนี้จะล็อกอินด้วย User ID/รหัสผ่าน (PIN) ของพนักงานแต่ละคนตามปกติ ไม่ใช่อีเมลนี้ — อีเมล/รหัสผ่านนี้ใช้ยืนยันเจ้าของร้านเพื่อผูกเครื่องเข้ากับฐานข้อมูลร้านเดิม และระบบจะไม่เก็บรหัสผ่าน</p>
-<button class="w-full text-center text-[11px] text-slate-400 underline btn-touch" onclick="document.getElementById('setup-join-fields').classList.add('hidden'); document.getElementById('setup-fresh-fields').classList.remove('hidden');" type="button">← กลับไปสร้างร้านใหม่แทน</button>
-</div>
-</div>
 </div>
 <div class="fixed inset-0 z-[9999] bg-slate-950 flex flex-col items-center justify-center text-white p-6 transition-all duration-500" id="lock-screen" style="opacity: 1; display: flex;">
 <div class="mb-8 text-center fade-in">
@@ -507,8 +477,7 @@ body{
 <button class="hidden bg-amber-100 text-amber-700 border border-amber-300 px-2.5 py-2 rounded-xl text-[10px] font-black btn-touch leading-tight" id="mgr-session-badge" onclick="window.lockManagerSessionNow()" title="กดเพื่อล็อกโหมดผู้จัดการทันที">
           🔓 ผู้จัดการ<br/><span id="mgr-session-countdown">--:--</span>
 </button>
-<button class="bg-slate-100 p-3 rounded-xl text-xl btn-touch" onclick="window.startCameraScan()" title="สแกนสินค้า">📸</button>
-<button class="bg-rose-50 text-rose-600 border border-rose-100 p-3 rounded-xl text-lg btn-touch" onclick="window.confirmLogout()" title="ออกจากระบบ">🚪</button>
+<button class="bg-slate-100 p-3 rounded-xl text-xl btn-touch" onclick="window.startCameraScan()">📸</button>
 <div class="text-right border-l pl-3">
 <div class="font-bold text-slate-700 text-sm tabular-nums" id="clock">00:00:00</div>
 <div class="text-[8px] px-2 py-1 rounded-full bg-rose-50 text-rose-500 font-black mt-1" id="shift-status-pill">CLOSED</div>
@@ -549,9 +518,11 @@ body{
 </section>
 <!-- VIEW: STOCK -->
 <section class="view-content hidden fade-in" id="view-stock">
+<div class="mb-4 flex justify-end"><button class="bg-pink-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openModal('modal-bulk-image')"><span class="text-sm">🖼️</span>นำเข้ารูป(ชุด)</button></div>
+
 <div id="stock-action-grid" class="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-4 text-center text-slate-800">
-<button class="bg-indigo-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openModal('modal-command')">
-<span class="text-sm">➕</span>นำเข้าสินค้า</button>
+<button class="bg-indigo-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openProductModal()">
+<span class="text-sm">➕</span>เพิ่มสินค้าใหม่</button>
 <button class="bg-purple-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.toggleColumnPanel()">
 <span class="text-sm">🧩</span>คอลัมน์</button>
 <button class="bg-emerald-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" id="btn-toggle-count-mode" onclick="window.toggleStockCountMode()">
@@ -1077,6 +1048,18 @@ body{
 <input class="w-full bg-white border border-slate-300 p-3 rounded-2xl outline-none font-bold text-2xl text-center text-slate-800" id="p-image" placeholder="เช่น 🔨, 🔩" type="text"/>
 </div>
 </div>
+<div>
+<label class="font-bold text-slate-500 ml-1 block mb-1">รูปภาพสินค้าจริง (ไม่บังคับ)</label>
+<div class="flex gap-3 items-center mb-2">
+<img class="hidden w-16 h-16 rounded-xl object-cover border border-slate-300 flex-shrink-0" id="p-image-url-preview" src=""/>
+<input class="w-full bg-white border border-slate-300 p-3 rounded-2xl outline-none text-xs text-slate-800" id="p-image-url" oninput="window.previewProductImageUrl()" placeholder="https://... (วางลิงก์รูปภาพเอง หรืออัปโหลดจากเครื่องด้านล่าง)" type="text"/>
+</div>
+<label class="w-full flex items-center justify-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 p-2.5 rounded-2xl text-xs font-bold cursor-pointer btn-touch">
+              📤 <span id="p-image-upload-label">อัปโหลดรูปจากเครื่อง (ไป Supabase)</span>
+<input accept="image/*" class="hidden" id="p-image-upload-input" onchange="window.handleProductImageUpload(event)" type="file"/>
+</label>
+<p class="text-[9px] text-slate-400 ml-1 mt-1">ถ้าใส่รูปภาพจริง ระบบจะแสดงรูปนี้แทนไอคอนในหน้าขายและตารางสต็อก</p>
+</div>
 </div>
 <div class="space-y-3">
 <div class="flex justify-between items-center bg-indigo-50 p-2.5 rounded-xl border border-indigo-100">
@@ -1190,7 +1173,7 @@ body{
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">2.</b><span><b>ตั้ง PIN เจ้าของร้าน</b> — เปิดหัวข้อ "👥 ผู้ใช้งานและความปลอดภัย" ตั้ง PIN 4 หลักไว้ล็อกหน้าจอและป้องกันการแก้ไขข้อมูลสำคัญ (ถ้ายังไม่ตั้ง ใครก็เปิดแก้ข้อมูลได้ทุกอย่าง)</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">3.</b><span><b>เพิ่มคนอื่นในครอบครัว/พนักงาน (ถ้ามี)</b> — ในหัวข้อเดียวกัน กด "เปิดหน้าจัดการผู้ใช้งาน" เพื่อให้แต่ละคนมี PIN ของตัวเอง ระบบจะบันทึกไว้ว่าใครทำรายการอะไร — <u>ถ้าใช้คนเดียว ข้ามขั้นตอนนี้ได้เลย</u> ไม่จำเป็นต้องสร้างผู้ใช้งานเพิ่ม PIN หลักก็ใช้งานได้ครบ</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">4.</b><span><b>เพิ่มสินค้า</b> — ไปที่หน้า "คลัง" กด "เพิ่มสินค้าใหม่" ทีละชิ้น หรือถ้ามีสินค้าเยอะ ใช้ปุ่มนำเข้าจากไฟล์ Excel/CSV แทน (ประหยัดเวลากว่ามาก)</span></li>
-<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>ระบบคลาวด์และซิงค์</b> — เมื่อร้านเชื่อม Supabase แล้ว โปรแกรมจะใช้ Session และซิงค์อัตโนมัติตามรายการที่ทำ ไม่ต้องกดบันทึกการเชื่อมต่อหรือบังคับซิงค์เอง</span></li>
+<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>เชื่อมต่อ Supabase สำหรับฐานข้อมูลร้าน</b> — ถ้าจะเปิดร้านจากมากกว่า 1 เครื่อง/เบราว์เซอร์ ให้เปิดหัวข้อ "🗄️ ฐานข้อมูลและการซิงค์ข้อมูล" กรอก Project URL และ anon key จาก Supabase แล้วกด "บันทึกและเชื่อมต่อ" — ถ้าเปิดจากเครื่องเดียวตลอด ข้ามได้เลย</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">6.</b><span><b>เริ่มขายได้เลย</b> — กลับไปหน้า "ขาย" เปิดกะ (ถ้ายังไม่เปิด) แล้วเริ่มขายสินค้าได้ทันที</span></li>
 </ol>
 <div class="bg-white p-3 rounded-xl border border-amber-200 mt-3 text-[10px] text-slate-500 leading-relaxed">
@@ -1305,45 +1288,25 @@ body{
 </div>
 </details>
 <!-- ================= 3. DATABASE & SYNC ================= -->
-<!-- SOUND SETTINGS -->
-<details class="bg-violet-50 rounded-2xl border border-violet-200 overflow-hidden">
-<summary class="p-4 font-bold text-violet-800 cursor-pointer text-xs flex items-center gap-1">🔊 เสียงและการแจ้งเตือน</summary>
-<div class="p-4 pt-0 space-y-3">
-  <div class="bg-white rounded-xl border p-3">
-    <label class="flex items-center justify-between text-xs font-bold"><span>เปิดเสียงระบบ</span><input id="setting-sound-enabled" type="checkbox" class="w-5 h-5 accent-violet-600" onchange="window.saveSoundSettings()"></label>
-    <div class="mt-3"><label class="text-[10px] text-slate-500 font-bold">ระดับเสียง</label><input id="setting-sound-volume" type="range" min="0" max="100" step="5" class="w-full" oninput="window.previewSoundVolume(this.value)" onchange="window.saveSoundSettings()"></div>
-  </div>
-  <div class="bg-white rounded-xl border p-3 space-y-2">
-    <div class="text-[10px] text-slate-500 font-bold">เสียงตามสถานะ</div>
-    <div class="grid grid-cols-[1fr_auto] gap-2 items-center text-[10px]">
-      <label>สำเร็จ / เพิ่มสินค้า<select id="setting-sound-success" class="ml-2 border rounded-lg p-1" onchange="window.saveSoundSettings()"><option value="success">ติ๊งสั้น</option><option value="soft">นุ่ม</option><option value="none">ปิด</option></select></label><button class="px-2 py-1 bg-slate-100 rounded-lg btn-touch" onclick="window.testSound('success')">▶</button>
-      <label>ขายสำเร็จ / ชำระเงิน<select id="setting-sound-sale" class="ml-2 border rounded-lg p-1" onchange="window.saveSoundSettings()"><option value="sale">เสียงขาย</option><option value="success">ติ๊งสั้น</option><option value="none">ปิด</option></select></label><button class="px-2 py-1 bg-slate-100 rounded-lg btn-touch" onclick="window.testSound('sale')">▶</button>
-      <label>เตือน / ผิดพลาด<select id="setting-sound-error" class="ml-2 border rounded-lg p-1" onchange="window.saveSoundSettings()"><option value="error">เสียงเตือน</option><option value="success">ติ๊งสั้น</option><option value="none">ปิด</option></select></label><button class="px-2 py-1 bg-slate-100 rounded-lg btn-touch" onclick="window.testSound('error')">▶</button>
-    </div>
-  </div>
-  <div class="bg-white rounded-xl border p-3"><label class="flex items-center justify-between text-[10px] font-bold"><span>พูดยอดรวมเมื่อชำระเงิน</span><input id="setting-voice-total" type="checkbox" class="w-5 h-5 accent-violet-600" onchange="window.saveSoundSettings()"></label><p class="text-[9px] text-slate-400 mt-1">ใช้เสียงภาษาไทยของเครื่อง เฉพาะจุดสำคัญ ไม่พูดทุกครั้งที่ยอดเปลี่ยน</p></div>
-</div>
-</details>
 <details class="bg-teal-50 rounded-2xl border border-teal-200 overflow-hidden">
-<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1">🗄️ ฐานข้อมูลและการซิงค์ข้อมูล</summary>
+<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1" onclick="setTimeout(window.loadSupabaseConfigIntoForm, 0)">🗄️ ฐานข้อมูลและการซิงค์ข้อมูล</summary>
 <div class="p-4 pt-0 space-y-3">
 <div class="bg-white p-3 rounded-xl border border-teal-100">
-<h4 class="text-xs font-bold text-teal-800 mb-1">สถานะฐานข้อมูลและการซิงค์</h4>
+<h4 class="text-xs font-bold text-teal-800 mb-1">การเชื่อมต่อ Supabase ของร้านนี้</h4>
 <p class="text-[9px] text-slate-500 mb-2 leading-relaxed">
-<b>ระบบเชื่อมต่อและซิงค์อัตโนมัติ</b> โปรแกรมจะใช้ Supabase Auth session ที่บันทึกโดยระบบ Supabase
-และส่ง/รับข้อมูลตามรายการที่ทำ ไม่ต้องกดบันทึกการเชื่อมต่อหรือบังคับซิงค์เอง
-</p>
-<div class="grid grid-cols-2 gap-2 text-[10px]">
-  <div class="rounded-xl bg-slate-50 border border-slate-100 p-2">
-    <div class="text-slate-400">การเชื่อมต่อ</div>
-    <div id="supabase-connection-state" class="font-bold text-slate-700 mt-1">กำลังตรวจสอบ...</div>
-  </div>
-  <div class="rounded-xl bg-slate-50 border border-slate-100 p-2">
-    <div class="text-slate-400">การซิงค์</div>
-    <div id="sync-status-badge" class="font-bold text-slate-700 mt-1">กำลังตรวจสอบ...</div>
-  </div>
-</div>
-<p class="text-[9px] text-slate-400 mt-2">หาก Session หมดอายุ ระบบจะขอให้เข้าสู่ระบบใหม่เพื่อความปลอดภัย และจะไม่เก็บรหัสผ่านไว้ในเครื่อง</p>
+<b>ซิงค์อัตโนมัติอยู่แล้ว</b> ทุกการเปลี่ยนแปลงในเครื่องนี้ส่งขึ้น Supabase เองในเบื้องหลัง
+                  และทุกครั้งที่เปิดแอปจะดึงข้อมูลล่าสุดมาอัตโนมัติก่อนแสดงหน้าจอ
+                </p>
+<label class="text-[10px] font-bold text-slate-500 mb-1 block">Project URL</label>
+<input class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] font-mono outline-none text-slate-800 mb-2" id="supabase-config-url" placeholder="https://xxxxx.supabase.co" type="text"/>
+<label class="text-[10px] font-bold text-slate-500 mb-1 block">anon public key</label>
+<input class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] font-mono outline-none text-slate-800 mb-2" id="supabase-config-key" placeholder="eyJ..." type="text"/>
+<label class="text-[10px] font-bold text-slate-500 mb-1 block">อีเมลสำหรับ Supabase Auth / กู้คืนบัญชี</label>
+<input autocomplete="email" class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] outline-none text-slate-800 mb-2" id="supabase-auth-email" placeholder="owner@example.com" type="email"/>
+<label class="text-[10px] font-bold text-slate-500 mb-1 block">รหัสผ่านบัญชี (ใช้ยืนยันครั้งแรกเท่านั้น)</label>
+<input autocomplete="current-password" class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] outline-none text-slate-800 mb-2" id="supabase-auth-password" placeholder="รหัสผ่านของ User ID นี้" type="password"/>
+<p class="text-[9px] text-amber-600 mb-2">⚠️ ใช้ anon public key เท่านั้น ห้ามใช้ service_role/secret key • Password จะไม่ถูกบันทึกลงเครื่อง และจะใช้เฉพาะกับ Supabase Auth ในครั้งที่เชื่อมต่อ</p>
+<button class="w-full py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold text-[10px] btn-touch mb-2" onclick="window.saveSupabaseConfig()">💾 บันทึกและเชื่อมต่อโปรเจกต์นี้</button>
 </div>
 <!-- ================= ENTERPRISE TOOLS (NEW) ================= -->
 <div class="bg-white p-3 rounded-xl border border-indigo-200">
@@ -1376,7 +1339,6 @@ body{
 </div>
 </details>
 </div>
-<div class="mt-4 pt-4 border-t border-slate-200"><button class="w-full py-3 bg-rose-50 text-rose-600 border border-rose-200 rounded-2xl font-bold text-sm btn-touch" onclick="window.confirmLogout()">🚪 ออกจากระบบ</button></div>
 </div>
 </div>
 <!-- DATABASE HEALTH / AUDIT LOG MODAL -->
@@ -1693,7 +1655,7 @@ body{
 <div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-command">
 <div class="bg-white w-full max-w-4xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
 <div class="flex justify-between items-center mb-4 border-b pb-3">
-<h3 class="text-xl font-black text-slate-800">⚡ นำเข้าสินค้าด่วนด้วย Excel / CSV</h3>
+<div><h3 class="text-xl font-black text-slate-800">⚡ นำเข้าสินค้าด่วน</h3><p class="text-[10px] text-slate-400 font-semibold mt-0.5">สินค้า + รูปสินค้า • ตรวจสอบก่อนบันทึกจริง</p></div>
 <button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-command')">✕</button>
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -1708,7 +1670,7 @@ body{
   <p class="text-[10px] text-slate-500 mb-2">ชื่อไฟล์ต้องตรงกับคอลัมน์ "ไฟล์รูปสินค้า" ใน Excel</p>
   <input accept="image/*" class="w-full text-[10px] border rounded-xl p-2 bg-white text-slate-800" id="import-image-files-uploader" multiple type="file" onchange="window.prepareIntegratedProductImageImport()"/>
   <span class="text-[10px] font-bold text-emerald-700 mt-1" id="import-image-file-count">ยังไม่ได้เลือกรูป</span>
-  <p class="text-[9px] text-slate-500 mt-1">1) เลือก Excel → 2) กดวิเคราะห์ → 3) ตรวจรายการ → 4) กด “นำเข้าสินค้า + รูป”</p>
+  <div class="mt-2 w-full rounded-xl bg-white border border-emerald-100 p-2 text-[9px] text-slate-500"><b class="text-emerald-700">ขั้นตอน:</b> 1 เลือก Excel → 2 เลือกรูป → 3 วิเคราะห์ → 4 ตรวจสอบ → 5 นำเข้า</div>
 </div>
 <div class="flex flex-col">
 <textarea class="w-full flex-1 p-3 border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" id="command-input" placeholder="หรือวางข้อความคั่นด้วยลูกน้ำ (CSV) ที่นี่... (รองรับเฉพาะขนาดหลัก ถ้าต้องการนำเข้าตัวเลือกแบ่งขายด้วย ให้ใช้วิธีอัปโหลดไฟล์ Excel/CSV ทางซ้ายแทน)
@@ -1809,11 +1771,161 @@ body{
 <button class="w-full py-4 bg-teal-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-sm" onclick="window.runAutoProductCode()">▶️ เริ่มรันรหัส</button>
 </div>
 </div>
+<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-command">
+<div class="bg-white w-full max-w-4xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
+<div class="flex justify-between items-center mb-4 border-b pb-3">
+<h3 class="text-xl font-black text-slate-800">⚡ นำเข้าสินค้าด่วนด้วย Excel / CSV</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-command')">✕</button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+<div class="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer bg-slate-50 hover:bg-slate-100" onclick="document.getElementById('import-file-uploader').click()">
+<span class="text-4xl mb-2">📁</span>
+<p class="text-xs font-bold text-slate-700">คลิกอัปโหลดไฟล์ Excel (.xlsx) หรือ CSV (.csv)</p>
+<input accept=".xlsx, .csv" class="hidden" id="import-file-uploader" onchange="window.handleBulkFileUpload(event)" type="file"/>
+</div>
+<div class="flex flex-col">
+<textarea class="w-full flex-1 p-3 border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" id="command-input" placeholder="หรือวางข้อความคั่นด้วยลูกน้ำ (CSV) ที่นี่... (รองรับเฉพาะขนาดหลัก ถ้าต้องการนำเข้าตัวเลือกแบ่งขายด้วย ให้ใช้วิธีอัปโหลดไฟล์ Excel/CSV ทางซ้ายแทน)
+ลำดับ: ชื่อสินค้า, ขนาด, หมวดหมู่, บาร์โค้ด, ทุน, ขาย, สต็อก, ขั้นต่ำ
+ตัวอย่าง: ท่อ PVC สีฟ้า, 1/2 นิ้ว, ท่อ &amp; ข้อต่อ, 8850001, 35, 55, 120, 25"></textarea>
+<button class="w-full mt-2 py-2 bg-indigo-600 text-white rounded-xl font-bold text-xs btn-touch" onclick="window.processCommandText()">ประมวลผลข้อความ</button>
+</div>
+</div>
+<div class="hidden bg-indigo-50/50 p-4 border border-indigo-100 rounded-2xl mb-4 text-xs" id="import-mapping-sec">
+<h4 class="font-bold text-indigo-900 mb-3">🛠️ จับคู่คอลัมน์จากไฟล์ที่อัปโหลด</h4>
+<p class="text-[10px] text-indigo-800/70 mb-3">💡 ไฟล์ที่ส่งออกจากปุ่ม "📊 Excel" ในหน้าคลังสินค้าจะจับคู่คอลัมน์ให้อัตโนมัติทุกคอลัมน์ (รวมขนาด/หมวดหมู่/ตัวเลือกแบ่งขาย) — ไม่ต้องจับคู่มือ</p>
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 text-slate-800" id="mapping-selectors-grid"></div>
+<button class="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs btn-touch" onclick="window.applyColumnMappingAndAnalyze()">วิเคราะห์และจำลองการนำเข้า</button>
+</div>
+<div class="hidden flex justify-between items-center mb-2 bg-slate-100 p-2 rounded-xl text-xs" id="preview-actions-bar">
+<div class="text-[10px] font-bold text-slate-600" id="import-stats"></div>
+<div class="flex gap-2">
+<button class="px-2.5 py-1 bg-white hover:bg-slate-50 rounded-lg text-[9px] font-bold border btn-touch" onclick="window.selectOnlyValidImports()">ลบแถวที่ผิดพลาดทั้งหมดออก</button>
+</div>
+</div>
+<p class="hidden text-[9px] text-slate-400 mb-2" id="import-hint">🟥 ผิดพลาด (ต้องแก้ก่อนถึงจะนำเข้าได้)   🟨 มีคำเตือน (นำเข้าได้แต่ควรตรวจสอบ)   ⬜ พร้อมนำเข้า — คลิกค่าไหนในตารางก็แก้ไขได้ทันที</p>
+<div class="relative flex-1 min-h-[250px] bg-slate-50 rounded-2xl overflow-auto border border-slate-200">
+<div class="w-full text-xs" id="import-preview-area"></div>
+</div>
+<div class="flex gap-4 mt-6 border-t pt-4">
+<button class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold btn-touch text-xs" onclick="window.closeModal('modal-command')">ยกเลิก</button>
+<button class="flex-[2] py-4 bg-emerald-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs hidden" id="btn-confirm-import" onclick="window.confirmImportData()">ยืนยันนำเข้าข้อมูลลงสู่สต็อกจริง</button>
+</div>
+</div>
+</div>
+<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-cleanup-images">
+<div class="bg-white w-full max-w-3xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
+<div class="flex justify-between items-center mb-4 border-b pb-3">
+<h3 class="text-xl font-black text-slate-800">🧹 ล้างรูปที่ไม่ได้ใช้แล้ว</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-cleanup-images')">✕</button>
+</div>
+<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
+          หารูปที่อัปโหลดไว้ใน Supabase Storage แต่ตอนนี้<b>ไม่มีสินค้าตัวไหนใช้อยู่แล้ว</b> (เช่น หลังจากรวมสินค้าที่เคยแยกการ์ดกันเป็นกลุ่มเดียว รูปของตัวที่ถูกรวมจะเหลือค้างไว้เฉยๆ) ลบได้อย่างปลอดภัยเพื่อประหยัดพื้นที่ — สินค้าที่ยังใช้รูปอยู่จะไม่ถูกแตะ
+        </p>
+<button class="bg-rose-500 text-white px-4 py-2 rounded-xl font-bold text-xs btn-touch shadow-md mb-4 self-start" onclick="window.scanOrphanedImages()">🔍 เริ่มสแกน</button>
+<div class="space-y-3" id="cleanup-images-results">
+<p class="text-center text-slate-400 text-xs py-10">กด "เริ่มสแกน" เพื่อหารูปที่ไม่มีสินค้าใช้แล้ว</p>
+</div>
+</div>
+</div>
+<div class="fixed inset-0 z-[160] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-quick-cat-edit">
+<div class="bg-white w-full max-w-sm rounded-[2rem] p-6 shadow-2xl flex flex-col max-h-[85vh]">
+<div class="flex justify-between items-center mb-3 border-b pb-2">
+<h3 class="text-sm font-black text-slate-800">📁 แก้ไขหมวดหมู่</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-lg btn-touch" onclick="window.closeModal('modal-quick-cat-edit')">✕</button>
+</div>
+<p class="text-xs font-bold text-indigo-600 mb-3" id="quick-cat-edit-product-name"></p>
+<p class="text-[10px] text-slate-400 mb-2">ติ๊กได้หลายหมวดหมู่ (สินค้าอยู่ได้มากกว่า 1 หมวด)</p>
+<div class="space-y-1 overflow-y-auto flex-1 mb-3" id="quick-cat-edit-list"></div>
+<button class="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold text-sm btn-touch" onclick="window.saveQuickCategoryEdit()">บันทึก</button>
+</div>
+</div>
+<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-run-code">
+<div class="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
+<div class="flex justify-between items-center mb-4 border-b pb-3">
+<h3 class="text-xl font-black text-slate-800">🔢 รันรหัสสินค้าอัตโนมัติ</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-run-code')">✕</button>
+</div>
+<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
+          ตั้งรหัสสินค้า (SKU) ให้เรียงลำดับอัตโนมัติทั้งร้าน เรียงตามชื่อสินค้า ก-ฮ เหมาะสำหรับพิมพ์ป้ายราคา/จัดชั้นวางให้เป็นระบบ
+        </p>
+<div class="space-y-3 mb-4">
+<div>
+<label class="text-[10px] font-bold text-slate-500 block mb-1">คำนำหน้ารหัส (ถ้ามี)</label>
+<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-prefix" placeholder="เช่น A- หรือเว้นว่างไว้ก็ได้" type="text"/>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div>
+<label class="text-[10px] font-bold text-slate-500 block mb-1">เริ่มจากเลข</label>
+<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-start" min="0" type="number" value="1"/>
+</div>
+<div>
+<label class="text-[10px] font-bold text-slate-500 block mb-1">จำนวนหลัก (เติม 0)</label>
+<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-digits" max="8" min="1" type="number" value="4"/>
+</div>
+</div>
+<div>
+<label class="text-[10px] font-bold text-slate-500 block mb-1">ขอบเขต</label>
+<select class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-scope">
+<option value="MISSING">เฉพาะสินค้าที่ยังไม่มีรหัส (ปลอดภัย ไม่แตะของเดิม)</option>
+<option value="ALL">ทั้งหมด (เขียนทับรหัสเดิมทุกตัว)</option>
+</select>
+</div>
+<div class="bg-teal-50 border border-teal-200 rounded-xl p-3 text-[10px] text-teal-700">
+            ตัวอย่างผลลัพธ์: <b id="run-code-preview">A-0001, A-0002, A-0003 ...</b>
+</div>
+</div>
+<button class="w-full py-4 bg-teal-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-sm" onclick="window.runAutoProductCode()">▶️ เริ่มรันรหัส</button>
+</div>
+</div>
+<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-bulk-image">
+<div class="bg-white w-full max-w-2xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
+<div class="flex justify-between items-center mb-4 border-b pb-3">
+<h3 class="text-xl font-black text-slate-800">🖼️ นำเข้ารูปภาพเป็นชุด</h3>
+<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-bulk-image')">✕</button>
+</div>
+<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
+          1) เลือกไฟล์ <b>image_mapping.json</b> (ไฟล์จับคู่ชื่อสินค้ากับชื่อไฟล์รูป)<br/>
+          2) เลือก<b>ไฟล์รูปทั้งหมดพร้อมกัน</b> (แตะเลือกได้หลายไฟล์จาก Files app)<br/>
+          3) กด "เริ่มนำเข้ารูปภาพ" — ระบบจะอัปโหลดรูปเข้า Supabase Storage แล้วผูกเข้ากับสินค้าที่<b>ชื่อตรงกัน</b>ให้อัตโนมัติ (สินค้าที่หารูปไม่เจอหรือชื่อไม่ตรงจะข้ามไปและแจ้งในสรุปผล)
+        </p>
+<div class="mb-3">
+<label class="text-xs font-bold text-slate-700 block mb-1">1. ไฟล์ image_mapping.json</label>
+<input accept=".json" class="w-full text-xs border rounded-xl p-2 text-slate-800" id="bulk-image-mapping-input" type="file"/>
+</div>
+<div class="mb-4">
+<label class="text-xs font-bold text-slate-700 block mb-1">2. ไฟล์รูปภาพทั้งหมด (เลือกได้หลายไฟล์)</label>
+<input accept="image/*" class="w-full text-xs border rounded-xl p-2 text-slate-800" id="bulk-image-files-input" multiple="" type="file"/>
+</div>
+<div class="hidden mb-4" id="bulk-image-progress-wrap">
+<div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+<div class="bg-indigo-600 h-3 rounded-full transition-all" id="bulk-image-progress-bar" style="width:0%"></div>
+</div>
+<p class="text-[10px] text-slate-500 mt-1 text-center" id="bulk-image-progress-text"></p>
+</div>
+<div class="hidden text-[10px] font-mono bg-slate-50 border rounded-xl p-3 max-h-40 overflow-y-auto mb-4 whitespace-pre-wrap text-slate-700" id="bulk-image-log"></div>
+<div class="flex gap-4 border-t pt-4">
+<button class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold btn-touch text-xs" onclick="window.closeModal('modal-bulk-image')">ปิด</button>
+<button class="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs" id="btn-start-bulk-image" onclick="window.startBulkImageImport()">เริ่มนำเข้ารูปภาพ</button>
+</div>
+</div>
+</div>
+
+
+
+
+
 <script defer="" src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 
 
 
 
-<script defer src="js/00-error-overlay.js"></script><script defer src="js/00-failsafe.js"></script><script defer src="js/10-product-code.js"></script><script defer src="js/11-image-cleanup.js"></script><script defer src="js/12-gestures.js"></script><script defer src="js/14-documents.js"></script><script defer src="js/01-core.js"></script><script defer src="js/02-sales-stock.js"></script><script defer src="js/03-admin-backup.js"></script><script defer src="js/04-supabase.js"></script><script defer src="js/05-transaction-monitoring.js"></script><script defer src="js/15-cost-control.js"></script><script defer src="js/16-integrated-product-import.js"></script><script defer src="js/17-v3-ui.js"></script></body>
+
+
+
+
+
+
+
+<script defer src="js/00-error-overlay.js"></script><script defer src="js/00-failsafe.js"></script><script defer src="js/10-product-code.js"></script><script defer src="js/11-image-cleanup.js"></script><script defer src="js/12-gestures.js"></script><script defer src="js/14-documents.js"></script><script defer src="js/01-core.js"></script><script defer src="js/02-sales-stock.js"></script><script defer src="js/03-admin-backup.js"></script><script defer src="js/04-supabase.js"></script><script defer src="js/05-transaction-monitoring.js"></script><script defer src="js/15-cost-control.js"></script><script defer src="js/13-bulk-image-import.js"></script><script defer src="js/17-v3-ui.js"></script></body>
 </html>
