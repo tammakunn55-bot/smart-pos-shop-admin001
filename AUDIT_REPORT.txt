@@ -1,0 +1,18 @@
+SMARTPOS V4 AUDIT REPORT
+Date: 2026-08-22
+
+Security preflight: PASS
+JavaScript node --check: PASS (14 files)
+HTML local JS references: checked
+Duplicate Supabase CDN include: removed
+Setup flow: Supabase-first
+Owner identity: real email, no synthetic @smartpos.local
+First setup reload: removed
+Runtime Supabase URL/key: entered in UI and stored only in browser localStorage
+Secret artifacts: none detected by preflight
+SQL: single-run file present; create_store is granted to authenticated role
+
+Important:
+- Publishable/anon key is not a secret; RLS is required.
+- service_role/sb_secret/database password/private keys must never be in frontend.
+- If a secret was previously committed to GitHub, rotate/revoke it.

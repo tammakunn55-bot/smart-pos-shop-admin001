@@ -370,9 +370,9 @@ window.__pendingProductImageStoragePath = null;
 
       // Called by the Supabase-first owner setup without a page reload.
       // Rehydrates the in-memory Core DB and switches from Setup -> Login safely.
-      window.finishFirstTimeSetupInMemory = async function(accountId) {
-        const id = String(accountId || '').trim().toLowerCase();
-        if (!id) throw new Error('ไม่พบ Account ID หลังสร้างร้าน');
+      window.finishFirstTimeSetupInMemory = async function(accountId, ownerEmail = '') {
+        const id = String(accountId || ownerEmail || '').trim().toLowerCase();
+        if (!id) throw new Error('ไม่พบบัญชีเจ้าของร้านหลังสร้างร้าน');
         const raw = await localforage.getItem(getAccountDbKey(id));
         if (!raw) throw new Error('ไม่พบข้อมูลบัญชีที่เพิ่งสร้างในเครื่อง');
         db = { ...DB_DEFAULT, ...raw };
@@ -394,7 +394,7 @@ window.__pendingProductImageStoragePath = null;
           lockScreen.style.opacity = '1';
         }
         const loginId = document.getElementById('login-user-id');
-        if (loginId) loginId.value = id;
+        if (loginId) loginId.value = ownerEmail || id;
         const loginPw = document.getElementById('login-user-password');
         if (loginPw) loginPw.value = '';
       };
@@ -786,364 +786,100 @@ window.__pendingProductImageStoragePath = null;
         const pwEl = document.getElementById('login-user-password');
         const errEl = document.getElementById('account-login-error-text');
         const lockEl = document.getElementById('account-login-lockout-text');
-        const id = (idEl?.value || '').trim().toLowerCase();
+        const email = (idEl?.value || '').trim().toLowerCase();
         const password = pwEl?.value || '';
-        if (accountLoginLockUntil > Date.now()) {
-          if (lockEl) lockEl.classList.remove('hidden');
+
+        if (!email || !password) {
+          if (errEl) { errEl.textContent = 'กรุณากรอกอีเมลและรหัสผ่าน'; errEl.classList.remove('hidden'); }
           return;
         }
-        if (!id || !password) return;
-        const user = (db.users || []).find(u => u.id === id && u.passwordHash && u.passwordSalt);
-        if (!user) {
-          accountLoginFailCount++;
-          if (accountLoginFailCount >= 5) {
-            accountLoginLockUntil = Date.now() + 30000;
-            accountLoginFailCount = 0;
-            if (lockEl) lockEl.classList.remove('hidden');
-            setTimeout(() => lockEl?.classList.add('hidden'), 31000);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          if (errEl) { errEl.textContent = 'รูปแบบอีเมลไม่ถูกต้อง'; errEl.classList.remove('hidden'); }
+          return;
+        }
+
+        try {
+          if (typeof window.ensureSupabaseClientReady !== 'function') throw new Error('Supabase client ยังไม่พร้อม');
+          const ready = await window.ensureSupabaseClientReady({ requireConfig: true, accountId: email });
+          if (!ready) throw new Error('ยังไม่ได้ตั้งค่า Supabase Project');
+
+          const client = getSupabaseClient();
+          if (!client) throw new Error('Supabase client ไม่พร้อมใช้งาน');
+
+          const result = await client.auth.signInWithPassword({ email, password });
+          if (result.error || !result.data?.user) throw new Error(result.error?.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+
+          localStorage.setItem('POS_ACCOUNT_ID', email);
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + email, email);
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
+          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + email, result.data.user.id);
+          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', result.data.user.id);
+          setConfiguredSupabase(getConfiguredSupabaseUrl(email), getConfiguredSupabaseAnonKey(email), email);
+
+          // If this is a verified owner whose store was not created yet, finish it now.
+          const { data: existingStore } = await client.rpc('current_store_id');
+          if (!existingStore) {
+            const pendingName = String(localStorage.getItem('PENDING_STORE_NAME') || '').trim();
+            if (pendingName) {
+              const { data: storeId, error } = await client.rpc('create_store', { p_name: pendingName, p_code: null });
+              if (error) throw new Error('สร้างร้านหลังยืนยันอีเมลไม่สำเร็จ: ' + error.message);
+              localStorage.setItem('POS_STORE_ID', storeId);
+              localStorage.removeItem('PENDING_STORE_NAME');
+              localStorage.removeItem('PENDING_OWNER_EMAIL');
+            }
           } else {
-            if (errEl) { errEl.classList.remove('hidden'); setTimeout(() => errEl.classList.add('hidden'), 1500); }
+            localStorage.setItem('POS_STORE_ID', existingStore);
           }
+
+          let accountDb = await localforage.getItem(getAccountDbKey(email));
+          if (!accountDb) {
+            accountDb = JSON.parse(JSON.stringify(DB_DEFAULT));
+            accountDb.storeName = localStorage.getItem('PENDING_STORE_NAME') || '';
+            accountDb.storeId = localStorage.getItem('POS_STORE_ID') || existingStore || '';
+            accountDb.users = [];
+          }
+          accountDb.users = accountDb.users || [];
+          let user = accountDb.users.find(u => String(u.email || '').toLowerCase() === email);
+          if (!user) {
+            user = {
+              id: email,
+              authUserId: result.data.user.id,
+              name: result.data.user.user_metadata?.full_name || email,
+              role: 'owner',
+              email,
+              createdAt: new Date().toISOString()
+            };
+            accountDb.users.push(user);
+          }
+          accountDb.storeId = localStorage.getItem('POS_STORE_ID') || accountDb.storeId || '';
+          await localforage.setItem(getAccountDbKey(email), accountDb);
+          db = { ...DB_DEFAULT, ...accountDb };
+          window.db = db;
+
+          if (typeof window.refreshStoreContext === 'function') await window.refreshStoreContext();
+
+          accountLoginFailCount = 0;
+          currentUserId = user.id;
+          currentUserName = user.name;
           if (pwEl) pwEl.value = '';
-          return;
-        }
-        const hash = await hashPassword(password, user.passwordSalt);
-        if (hash !== user.passwordHash) {
-          accountLoginFailCount++;
-          if (accountLoginFailCount >= 5) {
-            accountLoginLockUntil = Date.now() + 30000;
-            accountLoginFailCount = 0;
-            if (lockEl) lockEl.classList.remove('hidden');
-            setTimeout(() => lockEl?.classList.add('hidden'), 31000);
-          } else if (errEl) {
-            errEl.classList.remove('hidden'); setTimeout(() => errEl.classList.add('hidden'), 1500);
-          }
-          if (pwEl) pwEl.value = '';
-          return;
-        }
-        // เชื่อมต่อ Supabase Auth เฉพาะเท่าที่จำเป็น:
-        // - ถ้ามี session ของร้านนี้ (ที่เคย login ไว้ก่อนหน้า) อยู่แล้วในเบราว์เซอร์ ไม่ต้อง
-        //   ยืนยันตัวซ้ำ ใช้ session เดิมต่อได้เลย
-        // - ถ้ายังไม่มี session: ลองใช้ "รหัสผ่าน Supabase ของร้าน" ที่บันทึกไว้ในเครื่องนี้ตอน
-        //   เจ้าของร้าน setup/เชื่อมต่อคลาวด์ (ไม่ใช่รหัส PIN ของพนักงานที่ login อยู่ตอนนี้) ยืนยัน
-        //   ตัวอัตโนมัติแบบพนักงานไม่ต้องรู้/กรอกรหัสนี้เอง — ทำให้พนักงานออนไลน์ได้ทันทีเหมือน
-        //   เจ้าของร้าน ตราบใดที่เครื่องนี้เคยเชื่อมต่อคลาวด์ไว้แล้วอย่างน้อยหนึ่งครั้ง (ตอน setup
-        //   หรือตอนกด "เชื่อมต่อร้านที่มีอยู่แล้ว")
-        // - ถ้าไม่มีรหัสร้านบันทึกไว้เลย (เครื่องนี้ไม่เคยเชื่อมต่อคลาวด์มาก่อน) และผู้ที่ login
-        //   เป็น owner ให้ลองรหัส PIN ที่กรอกแทน (เผื่อ owner ตั้งรหัสให้ตรงกันไว้)
-        // - ถ้ายังไม่สำเร็จเลยสักทาง ปล่อยให้เข้าใช้งานแบบออฟไลน์ชั่วคราว ไม่บล็อกการขายหน้าร้าน
-        const hasSupabase = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
-        let supabaseSessionReady = false;
-        if (hasSupabase) {
-          try {
-            const client = getSupabaseClient();
-            const { data: sessionData } = await client.auth.getSession();
-            supabaseSessionReady = !!sessionData?.session;
-            if (supabaseSessionReady) {
-              const { data: who } = await client.auth.getUser();
-              const expectedEmail = user.role === 'owner'
-                ? (localStorage.getItem('POS_SUPABASE_AUTH_EMAIL::' + (localStorage.getItem('POS_ACCOUNT_ID') || '')) || '')
-                : (user.email || '');
-              const expectedId = user.supabaseAuthUserId || (user.role === 'owner' ? localStorage.getItem('POS_SUPABASE_AUTH_USER_ID::' + (localStorage.getItem('POS_ACCOUNT_ID') || '')) : '');
-              if ((expectedId && who?.user?.id !== expectedId) || (expectedEmail && who?.user?.email?.toLowerCase() !== expectedEmail.toLowerCase())) {
-                await client.auth.signOut();
-                supabaseSessionReady = false;
-              }
-            }
-          } catch (e) { supabaseSessionReady = false; }
 
-          if (!supabaseSessionReady) {
-            if (user.role === 'owner') {
-              const authResult = await window.ensureSupabaseAuthForCurrentAccount(password);
-              supabaseSessionReady = !!authResult.ok;
-              if (!authResult.ok) {
-                if (errEl) { errEl.textContent = '❌ ไม่สามารถยืนยัน Supabase Auth ได้: ' + (authResult.reason || ''); errEl.classList.remove('hidden'); }
-                if (pwEl) pwEl.value = '';
-                return;
-              }
-            } else if (user.email && typeof window.ensureSupabaseAuthForMember === 'function') {
-              const authResult = await window.ensureSupabaseAuthForMember(user.email, password);
-              supabaseSessionReady = !!authResult.ok;
-              if (!authResult.ok) {
-                if (errEl) { errEl.textContent = '❌ บัญชีสมาชิก Cloud ยังไม่พร้อม: ' + (authResult.reason || ''); errEl.classList.remove('hidden'); }
-                if (pwEl) pwEl.value = '';
-                return;
-              }
-            } else {
-              if (errEl) { errEl.textContent = '❌ สมาชิกคนนี้ยังไม่มีอีเมลสำหรับ Supabase Auth'; errEl.classList.remove('hidden'); }
-              if (pwEl) pwEl.value = '';
-              return;
-            }
-          }
-          if (supabaseSessionReady && typeof window.refreshStoreContext === 'function') await window.refreshStoreContext();
-        }
-        accountLoginFailCount = 0;
-        currentUserId = user.id;
-        currentUserName = user.name;
-        // หมายเหตุ: ไม่แก้ POS_ACCOUNT_ID ที่นี่โดยเจตนา — ตัวแปรนี้แทน "ร้าน/บัญชีที่โหลดอยู่บน
-        // เครื่องนี้" (กำหนดครั้งเดียวตอน setup/เชื่อมต่อร้านเท่านั้น) ส่วน currentUserId ด้านบนคือ
-        // "พนักงานคนไหนกำลังใช้งานอยู่ตอนนี้" คนละความหมายกัน การเซ็ต POS_ACCOUNT_ID = user.id ของ
-        // พนักงาน (โค้ดเดิม) ทำให้เครื่องหาฐานข้อมูล/การตั้งค่า Supabase ของบัญชีนี้ไม่เจอในการโหลด
-        // ครั้งถัดไป เพราะไม่เคยมีการสร้างข้อมูลไว้ภายใต้ user.id ของพนักงานเลย
-        if (pwEl) pwEl.value = '';
-        const lockScreen = document.getElementById('lock-screen');
-        if (lockScreen) {
-          lockScreen.style.opacity = '0';
-          setTimeout(() => { lockScreen.style.display = 'none'; lockScreen.style.opacity = '1'; }, 250);
-        }
-        showToast('เข้าสู่ระบบสำเร็จ: ' + user.name);
-        // แจ้งเจ้าของร้านครั้งเดียวถ้าเจอรายการซ้ำที่เกิดจากบั๊ก merge เดิม (แก้ต้นตอแล้ว แต่ผลพวง
-        // ที่เกิดไปแล้วในฐานข้อมูลต้องล้างด้วยมือทีหลัง ไม่ทำอัตโนมัติเพราะกระทบตัวเลขสต็อก ต้องให้
-        // เจ้าของร้านตัดสินใจเอง)
-        if (user.role === 'owner' && typeof window.scanMergeDuplicates === 'function') {
-          try {
-            const dupReport = window.scanMergeDuplicates();
-            const dupTotal = Object.values(dupReport).reduce((s, arr) => s + arr.length, 0);
-            if (dupTotal > 0) {
-              setTimeout(() => {
-                showToast(`⚠️ พบข้อมูลซ้ำ ${dupTotal} รายการจากบั๊ก sync เดิม กด "🧬 ล้างสินค้าซ้ำ" ที่หน้าคลังเพื่อล้างได้`);
-              }, 1500);
-            }
-          } catch (e) { /* ไม่ critical, ข้ามไปเงียบๆ ถ้าเช็คไม่ได้ */ }
-        }
-        if (hasSupabase && supabaseSessionReady) {
-          await checkAndPullNewerStateOnStartup();
-          // ดึงข้อมูลล่าสุดมาแล้ว ต่อด้วยการ push อีกครั้งเผื่อเครื่องนี้มีการแก้ไขที่ยังไม่ได้
-          // ซิงค์ค้างอยู่ (เช่น พนักงานใช้งานแบบออฟไลน์ก่อนหน้านี้ตอนยังไม่มี session) — ฟังก์ชันนี้
-          // เช็ค OCC/merge อยู่แล้วจึงปลอดภัยที่จะเรียกซ้ำแม้ไม่มีอะไรค้างจริง
-          if (typeof window.pushFullStateToSupabaseSafe === 'function') {
-            await window.pushFullStateToSupabaseSafe();
-          }
-        } else if (hasSupabase && !supabaseSessionReady) {
-          showToast('⚠️ ยังไม่ได้เชื่อมต่อคลาวด์ในเครื่องนี้ ข้อมูลจะบันทึกในเครื่องก่อน กรุณาให้เจ้าของร้าน (owner) เข้าสู่ระบบเพื่อเชื่อมต่อ');
-        }
-      };
-
-      window.lockCurrentAccount = async function() {
-        try { if (_supabaseClient) await _supabaseClient.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
-        _supabaseClient = null;
-        localStorage.removeItem('POS_ACCOUNT_ID');
-        localStorage.removeItem('POS_SUPABASE_AUTH_USER_ID');
-        currentUserId = null;
-        currentUserName = '';
-        const setupScreen = document.getElementById('first-time-setup-screen');
-        const lockScreen = document.getElementById('lock-screen');
-        if (lockScreen) lockScreen.style.display = 'none';
-        if (setupScreen) { setupScreen.classList.remove('hidden'); setupScreen.classList.add('flex'); }
-        showAlert('ออกจากบัญชี', 'การเปลี่ยนฐานข้อมูลควรทำบนเครื่อง/เบราว์เซอร์ของผู้ใช้คนนั้นโดยใช้ Supabase Project ของเขาเอง', false);
-      };
-
-      window.pressPin = async function(num) {
-        if (isMainPinLocked()) return;
-        if(tempPin.length < 4) {
-          tempPin += num.toString();
-          updatePinDisplay();
-          if(tempPin.length === 4) await verifyPin();
-        }
-      };
-      window.clearPin = function() {
-        tempPin = "";
-        updatePinDisplay();
-        const errText = document.getElementById('pin-error-text');
-        if (errText) errText.classList.add('hidden');
-      };
-      function updatePinDisplay() {
-        const displayArea = document.getElementById('pin-display-area');
-        if (!displayArea) return;
-        const dots = displayArea.children;
-        for(let i=0; i<4; i++) {
-          if (dots[i]) {
-            if(i < tempPin.length) dots[i].classList.add('pin-dot-active');
-            else dots[i].classList.remove('pin-dot-active');
-          }
-        }
-      }
-      async function verifyPin() {
-        if (!db.pinHash) {
-          const lockScreen = document.getElementById('lock-screen');
-          if (lockScreen) lockScreen.style.display = 'none';
-          tempPin = ""; updatePinDisplay();
-          return;
-        }
-        let currentHash = await hashPIN(tempPin, db.pinSalt);
-        let pinOk = currentHash === db.pinHash;
-        if (!pinOk && db.pinHash && db.pinHash.length === 64) {
-          pinOk = (await hashPINLegacy(tempPin, db.pinSalt)) === db.pinHash;
-          if (pinOk) { db.pinSalt = generatePinSalt(); db.pinHash = await hashPIN(tempPin, db.pinSalt); }
-        }
-        if(pinOk) {
-          db.security.lockFailCount = 0;
-          db.security.lockUntil = 0;
-          persist();
           const lockScreen = document.getElementById('lock-screen');
           if (lockScreen) {
             lockScreen.style.opacity = '0';
-            setTimeout(() => { lockScreen.style.display = 'none'; tempPin = ""; updatePinDisplay(); }, 500);
+            setTimeout(() => { lockScreen.style.display = 'none'; lockScreen.style.opacity = '1'; }, 250);
           }
-        } else {
-          db.security.lockFailCount = (db.security.lockFailCount || 0) + 1;
-          tempPin = ""; updatePinDisplay();
-          playSound('error');
-          if (db.security.lockFailCount >= PIN_MAX_ATTEMPTS) {
-            db.security.lockUntil = Date.now() + PIN_LOCK_MS;
-            db.security.lockFailCount = 0;
-            persist();
-            startMainLockCountdown();
-          } else {
-            persist();
-            const errText = document.getElementById('pin-error-text');
-            if (errText) {
-              errText.classList.remove('hidden');
-              setTimeout(() => { errText.classList.add('hidden'); }, 1000);
-            }
+          showToast('เข้าสู่ระบบสำเร็จ: ' + user.name);
+        } catch (e) {
+          console.error('Cloud login failed:', e);
+          if (errEl) {
+            errEl.textContent = '❌ เข้าสู่ระบบไม่สำเร็จ: ' + (e?.message || e);
+            errEl.classList.remove('hidden');
           }
+          if (pwEl) pwEl.value = '';
         }
-      }
-      
-      let mgrActionCallback = null;
-      let managerSessionExpiresAt = 0;
-
-      function isManagerSessionActive() {
-        return managerSessionExpiresAt > Date.now();
-      }
-
-      window.lockManagerSessionNow = function() {
-        managerSessionExpiresAt = 0;
-        updateManagerSessionBadge();
-        showToast("🔒 ล็อกโหมดผู้จัดการแล้ว");
       };
 
-      function startManagerSession() {
-        const minutes = (db.settings && db.settings.mgrSessionMinutes) || 0;
-        if (minutes > 0) {
-          managerSessionExpiresAt = Date.now() + minutes * 60 * 1000;
-        } else {
-          managerSessionExpiresAt = 0;
-        }
-        updateManagerSessionBadge();
-      }
-
-      function updateManagerSessionBadge() {
-        const badge = document.getElementById('mgr-session-badge');
-        const countdownEl = document.getElementById('mgr-session-countdown');
-        if (!badge || !countdownEl) return;
-        if (isManagerSessionActive()) {
-          const remainMs = managerSessionExpiresAt - Date.now();
-          const mm = Math.floor(remainMs / 60000);
-          const ss = Math.floor((remainMs % 60000) / 1000);
-          countdownEl.innerText = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-          badge.classList.remove('hidden');
-        } else {
-          if (managerSessionExpiresAt !== 0) managerSessionExpiresAt = 0;
-          badge.classList.add('hidden');
-        }
-      }
-
-      window.openManagerPinModal = function(callback) {
-        if (!db.pinHash) {
-          if (callback) callback();
-          showToast("💡 ยังไม่ได้ตั้งรหัส PIN ผู้จัดการ — แนะนำให้ตั้งค่าที่ ⚙️ ตั้งค่า > เปลี่ยนรหัส PIN");
-          return;
-        }
-        if (isManagerSessionActive()) {
-          if (callback) callback();
-          return;
-        }
-        mgrActionCallback = callback;
-        const input = document.getElementById('mgr-pin-input');
-        const errText = document.getElementById('mgr-pin-error');
-        if (input) input.value = "";
-        if (errText) errText.classList.add('hidden');
-
-        const userSelect = document.getElementById('mgr-user-select');
-        if (userSelect) {
-          if (db.users && db.users.length > 0) {
-            userSelect.innerHTML = `<option value="">-- เจ้าของร้าน (PIN หลัก) --</option>` +
-              db.users.map(u => `<option value="${escapeHTML(u.id)}">${escapeHTML(u.name)}</option>`).join('');
-            userSelect.classList.remove('hidden');
-          } else {
-            userSelect.classList.add('hidden');
-          }
-        }
-
-        const modal = document.getElementById('modal-manager-pin');
-        if (modal) {
-          modal.classList.remove('hidden');
-          modal.classList.add('flex');
-        }
-        if (isMgrPinLocked()) {
-          startMgrLockCountdown();
-        } else {
-          const btn = document.getElementById('mgr-pin-submit-btn');
-          if (btn && input) {
-            btn.disabled = false; btn.classList.remove('opacity-40', 'pointer-events-none');
-            input.disabled = false;
-          }
-        }
-        setTimeout(() => {
-          const inp = document.getElementById('mgr-pin-input');
-          if (inp) inp.focus();
-        }, 100);
-      };
-      
-      window.submitManagerPin = async function() {
-        if (isMgrPinLocked()) return;
-        const val = document.getElementById('mgr-pin-input').value;
-        const userSelect = document.getElementById('mgr-user-select');
-        const selectedUserId = userSelect ? userSelect.value : '';
-        const selectedUser = selectedUserId ? db.users.find(u => u.id === selectedUserId) : null;
-
-        const targetHash = selectedUser ? selectedUser.pinHash : db.pinHash;
-        const targetSalt = selectedUser ? selectedUser.pinSalt : db.pinSalt;
-        let inputHash = await hashPIN(val, targetSalt);
-        let pinOk = inputHash === targetHash;
-        if (!pinOk && targetHash && targetHash.length === 64) {
-          pinOk = (await hashPINLegacy(val, targetSalt)) === targetHash;
-          if (pinOk && selectedUser) { selectedUser.pinSalt = generatePinSalt(); selectedUser.pinHash = await hashPIN(val, selectedUser.pinSalt); }
-          else if (pinOk) { db.pinSalt = generatePinSalt(); db.pinHash = await hashPIN(val, db.pinSalt); }
-        }
-        if(pinOk) {
-          db.security.mgrFailCount = 0;
-          db.security.mgrLockUntil = 0;
-          currentUserId = selectedUser ? selectedUser.id : null;
-          currentUserName = selectedUser ? selectedUser.name : 'เจ้าของร้าน';
-          persist();
-          startManagerSession();
-          const callbackToRun = mgrActionCallback;
-          window.closeManagerPinModal();
-          if(callbackToRun) {
-            callbackToRun();
-          }
-        } else {
-          db.security.mgrFailCount = (db.security.mgrFailCount || 0) + 1;
-          const input = document.getElementById('mgr-pin-input');
-          const errText = document.getElementById('mgr-pin-error');
-          if (input) input.value = "";
-          if (db.security.mgrFailCount >= PIN_MAX_ATTEMPTS) {
-            db.security.mgrLockUntil = Date.now() + PIN_LOCK_MS;
-            db.security.mgrFailCount = 0;
-            persist();
-            startMgrLockCountdown();
-          } else {
-            persist();
-            if (errText) {
-              errText.innerText = "PIN ไม่ถูกต้อง!";
-              errText.classList.remove('hidden');
-            }
-          }
-        }
-      };
-      window.closeManagerPinModal = function() {
-        const modal = document.getElementById('modal-manager-pin');
-        if (modal) {
-          modal.classList.add('hidden');
-          modal.classList.remove('flex');
-        }
-        clearInterval(mgrLockTimerHandle);
-        mgrActionCallback = null;
-      };
-
-      // ==========================================
+// ==========================================
       // SALE HOME & CATEGORIES GRID
       // ==========================================
       window.renderBestsellerRow = function() {

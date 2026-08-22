@@ -80,133 +80,106 @@ function getCurrentStoreFingerprint() { return String(localStorage.getItem('POS_
 
 window.completeFirstTimeSetup = async function () {
   const storeName = document.getElementById('setup-store-name')?.value.trim() || '';
-  const userId = document.getElementById('setup-user-id')?.value.trim().toLowerCase() || '';
+  const ownerEmail = document.getElementById('setup-owner-email')?.value.trim().toLowerCase() || '';
+  const urlInput = document.getElementById('setup-supabase-url')?.value.trim() || '';
+  const keyInput = document.getElementById('setup-supabase-key')?.value.trim() || '';
   const password = document.getElementById('setup-user-password')?.value || '';
   const passwordConfirm = document.getElementById('setup-user-password-confirm')?.value || '';
 
   if (!storeName) return alert('กรุณาระบุชื่อร้าน');
-  if (!userId || !/^[a-z0-9._-]{4,32}$/.test(userId)) {
-    return alert('User ID ต้องเป็น a-z, 0-9, จุด ขีดกลาง หรือ _ และยาว 4-32 ตัวอักษร');
-  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) return alert('กรุณากรอกอีเมลเจ้าของร้านให้ถูกต้อง');
   if (password.length < 8) return alert('รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร');
   if (password !== passwordConfirm) return alert('รหัสผ่านยืนยันไม่ตรงกัน');
 
-  /*
-   * V4 FIRST-BOOT RULE:
-   * สร้างบัญชีบน Supabase ก่อน แล้วจึงสร้าง store และค่อยสร้าง Local POS cache
-   * ห้ามสร้าง Local Owner ก่อน เพราะจะทำให้ Local/Auth แยกจากกัน
-   *
-   * สำหรับ UX ที่ต้องการ "ID + Password" เราใช้ internal auth email ที่สร้างจาก
-   * User ID เช่น owner01@smartpos.local โดยผู้ใช้ไม่ต้องกรอกอีเมล
-   * แนะนำให้ปิด Authentication > Email > Confirm email ใน Project สำหรับ POS
-   * หากเปิดไว้ Supabase จะไม่คืน session ทันทีและต้องยืนยันอีเมลก่อน
-   */
-  const internalEmail = `${userId}@smartpos.local`;
-
+  let client = null;
   try {
-    let url = getConfiguredSupabaseUrl();
-    let key = getConfiguredSupabaseAnonKey();
+    const url = String(urlInput || getConfiguredSupabaseUrl() || SUPABASE_URL_DEFAULT || '').trim().replace(/\/$/, '');
+    const key = String(keyInput || getConfiguredSupabaseAnonKey() || SUPABASE_ANON_KEY_DEFAULT || '').trim();
 
-    // อนุญาตให้ผู้ติดตั้งกำหนดค่าไว้ใน constants ก่อน deploy
-    url = url || String(SUPABASE_URL_DEFAULT || '').trim().replace(/\/$/, '');
-    key = key || String(SUPABASE_ANON_KEY_DEFAULT || '').trim();
+    if (!url || !key) return alert('กรุณากรอก Supabase Project URL และ Publishable/anon key');
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return alert('Supabase Project URL ไม่ถูกต้อง');
+    if (/service_role|sb_secret|postgres(ql)?:\/\/|password\s*=/i.test(key)) return alert('ค่าที่กรอกมีลักษณะเป็น Secret/Database credential ซึ่งห้ามใช้ใน Frontend');
 
-    if (!url || !key) {
-      return alert(
-        'ยังไม่ได้ตั้งค่า Supabase\\n\\n' +
-        'เปิด js/04-supabase.js แล้วใส่ SUPABASE_URL_DEFAULT และ SUPABASE_ANON_KEY_DEFAULT ' +
-        'ด้วย Project URL และ Publishable/anon key ของ Supabase Project ใหม่ แล้ว Deploy ใหม่'
-      );
-    }
-    if (!/^https:\/\/.+\.supabase\.co$/.test(url)) return alert('Project URL ของ Supabase ไม่ถูกต้อง');
-    if (/service_role|sb_secret/i.test(key)) return alert('ห้ามใส่ service_role หรือ sb_secret ใน Frontend ให้ใช้ Publishable/anon key เท่านั้น');
+    // Runtime-only configuration: never written to source files or GitHub.
+    setConfiguredSupabase(url, key, ownerEmail);
+    localStorage.setItem('POS_ACCOUNT_ID', ownerEmail);
 
-    // บันทึก config ก่อนสร้าง client เพื่อให้ทุกโมดูลใช้ client ตัวเดียวกัน
-    setConfiguredSupabase(url, key, userId);
-    localStorage.setItem('POS_ACCOUNT_ID', userId);
-
-    const client = window.supabase.createClient(url, key, {
+    client = window.supabase.createClient(url, key, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
     _supabaseClient = client;
 
-    // ถ้าบัญชีนี้เคยสร้างแล้ว ให้ login แทนการ signUp ซ้ำ
-    let authResult = await client.auth.signUp({
-      email: internalEmail,
+    const authResult = await client.auth.signUp({
+      email: ownerEmail,
       password,
       options: {
-        data: {
-          username: userId,
-          full_name: storeName + ' เจ้าของร้าน',
-          store_name: storeName
-        }
+        data: { username: ownerEmail, full_name: storeName + ' เจ้าของร้าน', store_name: storeName }
       }
     });
-
-    let user = authResult.data?.user || null;
-    let session = authResult.data?.session || null;
 
     if (authResult.error) {
-      const signIn = await client.auth.signInWithPassword({ email: internalEmail, password });
-      if (signIn.error || !signIn.data?.session) {
-        throw new Error('สร้าง/เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (authResult.error?.message || signIn.error?.message || 'ไม่ทราบสาเหตุ'));
+      // If the account already exists, sign in rather than creating a duplicate.
+      const signIn = await client.auth.signInWithPassword({ email: ownerEmail, password });
+      if (signIn.error || !signIn.data?.user) {
+        throw new Error('สร้าง/เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (authResult.error.message || signIn.error?.message || 'ไม่ทราบสาเหตุ'));
       }
-      user = signIn.data.user;
-      session = signIn.data.session;
+      authResult.data = signIn.data;
     }
 
-    if (!user || !session) {
-      throw new Error(
-        'Supabase ยังไม่คืน Session ให้บัญชีใหม่\\n' +
-        'ให้ไปที่ Authentication > Providers > Email และปิด Confirm email สำหรับการทดสอบ POS ก่อน'
-      );
+    const user = authResult.data?.user;
+    const session = authResult.data?.session;
+
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + ownerEmail, ownerEmail);
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', ownerEmail);
+    if (user?.id) {
+      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + ownerEmail, user.id);
+      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', user.id);
     }
 
-    // สร้างร้านจริงบน PostgreSQL และผูก auth.uid() เป็น owner
-    const { data: storeId, error: storeError } = await client.rpc('create_store', {
-      p_name: storeName,
-      p_code: null
-    });
-    if (storeError) throw new Error('สร้างร้านบน Supabase ไม่สำเร็จ: ' + storeError.message);
-    if (!storeId) throw new Error('Supabase สร้างร้านสำเร็จแต่ไม่ส่ง store_id กลับมา');
+    if (!user) throw new Error('Supabase ไม่คืนข้อมูลผู้ใช้');
 
-    // สร้าง Local cache สำหรับ UI/ฟังก์ชันเดิม แต่ Cloud/Auth/Store เป็น source of truth
+    // With email confirmation enabled Supabase may return a user without a session.
+    // In that case store the pending store name and finish store creation after verification/login.
+    let storeId = null;
+    if (session) {
+      const { data, error } = await client.rpc('create_store', { p_name: storeName, p_code: null });
+      if (error) throw new Error('สร้างร้านบน Supabase ไม่สำเร็จ: ' + error.message);
+      storeId = data;
+    } else {
+      localStorage.setItem('PENDING_STORE_NAME', storeName);
+      localStorage.setItem('PENDING_OWNER_EMAIL', ownerEmail);
+      alert('สร้างบัญชี Supabase แล้ว กรุณายืนยันอีเมลก่อน แล้วกลับมาเข้าสู่ระบบอีกครั้ง ระบบจะสร้างร้านให้อัตโนมัติ');
+    }
+
+    const accountId = ownerEmail;
     const freshDb = JSON.parse(JSON.stringify(DB_DEFAULT));
     freshDb.storeName = storeName;
-    freshDb.storeId = storeId;
+    freshDb.storeId = storeId || '';
     freshDb.users = [{
-      id: userId,
+      id: accountId,
       authUserId: user.id,
       name: storeName + ' เจ้าของร้าน',
       role: 'owner',
-      email: internalEmail,
+      email: ownerEmail,
       createdAt: new Date().toISOString()
     }];
 
     await localforage.removeItem(DB_KEY_BASE);
-    await localforage.setItem(getAccountDbKey(userId), freshDb);
-    await localforage.setItem('POS_ACCOUNT_ID', userId);
+    await localforage.setItem(getAccountDbKey(accountId), freshDb);
+    await localforage.setItem('POS_ACCOUNT_ID', accountId);
     await localforage.setItem('POS_FIRST_SETUP_DONE', true);
 
-    localStorage.setItem('POS_ACCOUNT_ID', userId);
-    localStorage.setItem('POS_STORE_ID', storeId);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + userId, internalEmail);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', internalEmail);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + userId, user.id);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', user.id);
-    setConfiguredSupabase(url, key, userId);
-    localStorage.removeItem('PENDING_STORE_NAME');
+    localStorage.setItem('POS_ACCOUNT_ID', accountId);
+    if (storeId) localStorage.setItem('POS_STORE_ID', storeId);
+    setConfiguredSupabase(url, key, accountId);
     localStorage.removeItem(LAST_SYNCED_KEY);
 
-    // ไม่ reload หน้าเว็บ เพื่อป้องกัน white-screen/race บน GitHub Pages
-    if (typeof window.finishFirstTimeSetupInMemory === 'function') {
-      await window.finishFirstTimeSetupInMemory(userId);
-    } else {
-      // fallback: อัปเดตสถานะหลักแล้วให้ผู้ใช้ไป Login โดยไม่บังคับ reload
-      if (typeof window.showLogin === 'function') window.showLogin();
+    if (session && typeof window.finishFirstTimeSetupInMemory === 'function') {
+      await window.finishFirstTimeSetupInMemory(accountId, ownerEmail);
+      alert('สร้างร้าน "' + storeName + '" สำเร็จและเชื่อมต่อ Supabase แล้ว');
+    } else if (typeof window.showLogin === 'function') {
+      window.showLogin();
     }
-
-    alert('สร้างร้าน "' + storeName + '" และบัญชีเจ้าของร้านสำเร็จ\\nUser ID: ' + userId);
   } catch (err) {
     console.error('First setup failed:', err);
     try { await client?.auth?.signOut?.(); } catch (_) {}

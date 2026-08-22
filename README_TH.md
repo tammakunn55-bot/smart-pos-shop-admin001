@@ -1,50 +1,45 @@
-# SmartPOS V4 — GitHub Safe / Supabase First
+# Smart POS V4 — Supabase First / GitHub Safe
 
-ชุดนี้จัดเตรียมสำหรับนำขึ้น GitHub โดย **ไม่ฝังค่า Supabase URL/Key, password, service_role หรือข้อมูลร้านจริงใน source code**
+ชุดนี้ออกแบบให้ Supabase Auth เป็นตัวตนหลักของระบบ และไม่ฝัง Secret หรือ Project key ลงใน source code
 
-## ก่อนขึ้น GitHub
-
+## ติดตั้งครั้งแรก
 1. สร้าง Supabase Project ใหม่
-2. รัน `SMARTPOS_V4_SINGLE_RUN.sql` ใน SQL Editor เพียงครั้งเดียว
-3. ตรวจสอบ RLS และ Storage policies
-4. เปิด Email Auth ตามวิธีที่ระบบต้องการ
-5. อัปโหลด `index.html` และโฟลเดอร์ `js/`
-6. **ห้ามแก้ `js/04-supabase.js` เพื่อใส่ Key**
+2. เปิด SQL Editor และรัน `SMARTPOS_V4_SINGLE_RUN.sql` ทั้งไฟล์ครั้งเดียว
+3. ตรวจ Authentication > Providers > Email
+   - ถ้าปิด Confirm email: สร้างร้านแล้วเข้าใช้งานได้ทันที
+   - ถ้าเปิด Confirm email: ยืนยันอีเมลก่อน แล้วกลับมา Login ระบบจะสร้างร้านที่ค้างไว้ให้อัตโนมัติ
+4. นำ `index.html` และโฟลเดอร์ `js/` ขึ้น GitHub Pages
+5. เปิดเว็บ → สร้างร้าน
+6. กรอก ชื่อร้าน + อีเมลเจ้าของ + Supabase Project URL + Publishable/anon key + รหัสผ่าน
+7. URL/key ที่กรอกจะเก็บเฉพาะใน browser runtime/localStorage ไม่อยู่ใน GitHub
+8. ระบบจะ Supabase Auth → create_store → store_members(role=owner) → Dashboard
 
-## การตั้งค่า Supabase ของ Frontend
+## การเข้าใช้งานครั้งต่อไป
+Supabase Auth จะ persist/refresh session ใน browser; ถ้ายังมี session ให้เข้าใช้งานต่อโดยไม่ต้องพิมพ์รหัสผ่านซ้ำ
+เมื่อ Logout/session หมดอายุ จึง Login ด้วยอีเมลและรหัสผ่านอีกครั้ง
 
-หน้า Setup ของโปรแกรมให้กรอก Project URL และ Publishable/anon key **ตอน Runtime** แล้วระบบจะเก็บค่าไว้ในเครื่องของผู้ใช้ ไม่เก็บไว้ใน Git repository
+## ความปลอดภัย
+ห้ามใส่ service_role, sb_secret, database password, JWT secret หรือ private key ใน HTML/JS/Repository
+Publishable/anon key หากใช้ใน browser ต้องถูกป้องกันด้วย RLS และไม่ใช่ Secret
 
-> Publishable/anon key สามารถถูกเปิดเผยใน Browser ได้ตามการออกแบบของ Supabase แต่ถ้าต้องการนโยบาย "ไม่มี Key ใน Repository" ชุดนี้ก็ไม่ฝังค่าไว้ใน source
+ก่อน Commit ให้รัน:
+`python scripts/preflight_security.py`
 
-**ห้ามนำสิ่งต่อไปนี้ขึ้น GitHub เด็ดขาด:**
-- `service_role` / `sb_secret`
-- Database password
-- JWT secret
-- OAuth client secret
-- Private key / certificate private key
-- Backup ฐานข้อมูล
-- Export ลูกค้า/ยอดขาย/ข้อมูลร้านจริง
-- รูปหรือเอกสารจริงที่ไม่ต้องการเผยแพร่
+## ไฟล์ JS
+ชุดนี้ใช้ไฟล์ที่มีอยู่จริงในโปรแกรม:
+00-error-overlay.js
+00-failsafe.js
+01-core.js
+02-sales-stock.js
+03-admin-backup.js
+04-supabase.js
+05-transaction-monitoring.js
+10-product-code.js
+11-image-cleanup.js
+12-gestures.js
+13-bulk-image-import.js
+14-documents.js
+15-cost-control.js
+17-v3-ui.js
 
-## ตรวจความปลอดภัยก่อน Commit
-
-รัน:
-
-```bash
-python scripts/preflight_security.py
-```
-
-ถ้าผ่านจะแสดง `SECURITY PREFLIGHT: PASS` และควร Commit เฉพาะไฟล์ที่ผ่านการตรวจแล้ว
-
-## โครงสร้าง
-
-- `SMARTPOS_V4_SINGLE_RUN.sql` — SQL ใหม่สำหรับ Supabase Project ใหม่
-- `index.html` — Frontend
-- `js/` — JavaScript ของระบบ
-- `scripts/preflight_security.py` — ตรวจ secret/ข้อมูลต้องห้ามก่อน commit
-- `.gitignore` — กันไฟล์ลับและข้อมูลจริงไม่ให้ถูก track
-
-## สำคัญ
-
-`.gitignore` ป้องกันเฉพาะไฟล์ที่ยังไม่ถูก track เท่านั้น หากเคย Commit secret ไปแล้ว การเพิ่มชื่อไฟล์ใน `.gitignore` **ไม่ลบ secret ออกจาก Git history** ต้องลบออกจาก history และ rotate/revoke secret นั้นด้วย
+ไม่มีการสร้างไฟล์ 07/08/09/16 ขึ้นมาเดาเอง เพราะไม่พบไฟล์เหล่านี้ใน source ที่ตรวจสอบ
