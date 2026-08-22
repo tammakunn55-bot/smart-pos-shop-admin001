@@ -368,6 +368,37 @@ window.__pendingProductImageStoragePath = null;
       window.escapeHTML = escapeHTML;
       window.guardOnce = guardOnce;
 
+      // Called by the Supabase-first owner setup without a page reload.
+      // Rehydrates the in-memory Core DB and switches from Setup -> Login safely.
+      window.finishFirstTimeSetupInMemory = async function(accountId) {
+        const id = String(accountId || '').trim().toLowerCase();
+        if (!id) throw new Error('ไม่พบ Account ID หลังสร้างร้าน');
+        const raw = await localforage.getItem(getAccountDbKey(id));
+        if (!raw) throw new Error('ไม่พบข้อมูลบัญชีที่เพิ่งสร้างในเครื่อง');
+        db = { ...DB_DEFAULT, ...raw };
+        db.settings = { ...DB_DEFAULT.settings, ...(raw.settings || {}) };
+        db.counters = { ...DB_DEFAULT.counters, ...(raw.counters || {}) };
+        window.db = db;
+        currentUserId = null;
+        currentUserName = '';
+        const setupScreen = document.getElementById('first-time-setup-screen');
+        const lockScreen = document.getElementById('lock-screen');
+        const splash = document.getElementById('sync-splash-screen');
+        if (setupScreen) {
+          setupScreen.classList.add('hidden');
+          setupScreen.classList.remove('flex');
+        }
+        if (splash) splash.remove();
+        if (lockScreen) {
+          lockScreen.style.display = 'flex';
+          lockScreen.style.opacity = '1';
+        }
+        const loginId = document.getElementById('login-user-id');
+        if (loginId) loginId.value = id;
+        const loginPw = document.getElementById('login-user-password');
+        if (loginPw) loginPw.value = '';
+      };
+
       // ==========================================
       // DATABASE INITIALIZATION & MIGRATION
       // ==========================================

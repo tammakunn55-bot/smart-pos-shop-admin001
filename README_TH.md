@@ -1,56 +1,50 @@
-# Smart POS V4 FULL — Fresh Project
+# SmartPOS V4 — GitHub Safe / Supabase First
 
-**ชุดนี้เป็นโปรแกรมเต็ม** ไม่ใช่ demo app แบบย่อ
+ชุดนี้จัดเตรียมสำหรับนำขึ้น GitHub โดย **ไม่ฝังค่า Supabase URL/Key, password, service_role หรือข้อมูลร้านจริงใน source code**
 
-## Frontend ที่รวม
-- `index.html`
-- JS เต็ม 16 ไฟล์ที่ใช้จริงในชุดนี้
-- ระบบสินค้า/สต็อก/ขาย/ซื้อ/ลูกค้า/Supplier/รายงาน/เอกสาร/ต้นทุน/เสียง/รูป/gestures
-- Login/Session Supabase
-- Owner/Store/สมาชิก/สิทธิ์
-- นำเข้ารูปแบบเดิมด้วย `image_mapping.json` + เลือกรูปหลายไฟล์
-- Preview/ตรวจจับคู่ก่อน Upload ใน importer ที่แก้แล้ว
-- เอา Integrated Product Import รุ่นใหม่ออกแล้ว
-- เอา Legacy Join และปุ่ม Force Sync ออกจากหน้าเริ่มต้น
+## ก่อนขึ้น GitHub
 
-## SQL
-`SMARTPOS_V4_SINGLE_RUN.sql` เป็นไฟล์เดียวสำหรับ **Supabase Project ใหม่**
+1. สร้าง Supabase Project ใหม่
+2. รัน `SMARTPOS_V4_SINGLE_RUN.sql` ใน SQL Editor เพียงครั้งเดียว
+3. ตรวจสอบ RLS และ Storage policies
+4. เปิด Email Auth ตามวิธีที่ระบบต้องการ
+5. อัปโหลด `index.html` และโฟลเดอร์ `js/`
+6. **ห้ามแก้ `js/04-supabase.js` เพื่อใส่ Key**
 
-1. สร้าง Project ใหม่
-2. SQL Editor → New query
-3. วางไฟล์นี้ทั้งหมด
-4. Run ครั้งเดียว
-5. Authentication → Providers → Email เปิดใช้งาน
-6. สำหรับการทดสอบ ปิด Confirm email ชั่วคราวได้
+## การตั้งค่า Supabase ของ Frontend
 
-## สำคัญเรื่อง Frontend เดิม
-`pos_state` ยังคงอยู่ใน schema เพื่อให้ Frontend เต็มเดิมทุกฟังก์ชันทำงานต่อได้ทันที แต่ V4 เพิ่ม canonical tables สำหรับ Store/Members/Inventory/Sales/Images/Audit และมี RPC สำหรับธุรกรรมใหม่
+หน้า Setup ของโปรแกรมให้กรอก Project URL และ Publishable/anon key **ตอน Runtime** แล้วระบบจะเก็บค่าไว้ในเครื่องของผู้ใช้ ไม่เก็บไว้ใน Git repository
 
-## Supabase key
-ใช้เฉพาะ Project URL + publishable/anon key
-**ห้ามใช้ service_role หรือ sb_secret ใน Browser/GitHub**
+> Publishable/anon key สามารถถูกเปิดเผยใน Browser ได้ตามการออกแบบของ Supabase แต่ถ้าต้องการนโยบาย "ไม่มี Key ใน Repository" ชุดนี้ก็ไม่ฝังค่าไว้ใน source
 
-## ทดสอบตามลำดับ
-1. สร้างบัญชี Owner
-2. เชื่อม Project ใหม่
-3. สร้างร้าน
-4. เพิ่มสมาชิก/คนขาย
-5. เพิ่มหมวดหมู่
-6. เพิ่มสินค้า + SKU + Barcode + Stock ตั้งต้น 3
-7. เพิ่มลูกค้า
-8. เพิ่ม Supplier
-9. ซื้อเข้า/รับสินค้า
-10. เปิดกะ
-11. ขายสินค้าและตรวจ Stock ลด
-12. คืนสินค้าและตรวจ Stock เพิ่ม
-13. ตรวจรายงาน/VAT/ต้นทุน
-14. นำเข้ารูป: `นำเข้าด่วน` → `image_mapping.json` → เลือกรูป → ตรวจจับคู่ → Upload
-15. Logout แล้ว Login ใหม่ ตรวจว่า Session/ข้อมูลยังถูกต้อง
+**ห้ามนำสิ่งต่อไปนี้ขึ้น GitHub เด็ดขาด:**
+- `service_role` / `sb_secret`
+- Database password
+- JWT secret
+- OAuth client secret
+- Private key / certificate private key
+- Backup ฐานข้อมูล
+- Export ลูกค้า/ยอดขาย/ข้อมูลร้านจริง
+- รูปหรือเอกสารจริงที่ไม่ต้องการเผยแพร่
 
-ไม่ต้องใช้ฐานข้อมูลร้านเก่า และไม่ต้อง migration ฐานเดิม
+## ตรวจความปลอดภัยก่อน Commit
 
+รัน:
 
-## ตรวจสอบลำดับไฟล์ JS
-จากชุดโปรแกรมเดิมที่ตรวจสอบ ไม่พบไฟล์ `07`, `08`, `09` ใน source/index.html และไม่มีการเรียกใช้งานหมายเลขเหล่านี้ ดังนั้นจึงไม่สร้างไฟล์ปลอมขึ้นมาแทน เพื่อป้องกันการเปลี่ยนพฤติกรรมของระบบโดยไม่ทราบหน้าที่จริง
+```bash
+python scripts/preflight_security.py
+```
 
-`13-bulk-image-import.js` ถูกผูกเข้ากับ `index.html` แล้ว เพื่อให้ระบบนำเข้ารูปแบบ JSON ถูกโหลดจริง
+ถ้าผ่านจะแสดง `SECURITY PREFLIGHT: PASS` และควร Commit เฉพาะไฟล์ที่ผ่านการตรวจแล้ว
+
+## โครงสร้าง
+
+- `SMARTPOS_V4_SINGLE_RUN.sql` — SQL ใหม่สำหรับ Supabase Project ใหม่
+- `index.html` — Frontend
+- `js/` — JavaScript ของระบบ
+- `scripts/preflight_security.py` — ตรวจ secret/ข้อมูลต้องห้ามก่อน commit
+- `.gitignore` — กันไฟล์ลับและข้อมูลจริงไม่ให้ถูก track
+
+## สำคัญ
+
+`.gitignore` ป้องกันเฉพาะไฟล์ที่ยังไม่ถูก track เท่านั้น หากเคย Commit secret ไปแล้ว การเพิ่มชื่อไฟล์ใน `.gitignore` **ไม่ลบ secret ออกจาก Git history** ต้องลบออกจาก history และ rotate/revoke secret นั้นด้วย
