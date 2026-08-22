@@ -287,14 +287,20 @@
       if (typeof window.getSupabaseClient === 'function') {
         const client = window.getSupabaseClient();
         if (client) {
-          client.from('error_logs').insert([{
-            id: errorEntry.id,
-            error_type: errorEntry.type,
-            message: errorEntry.message,
-            stack_trace: errorEntry.stackTrace,
-            device_id: errorEntry.deviceId,
-            created_at: errorEntry.time
-          }]).then(({ error }) => {
+          client.auth.getUser().then(({ data }) => {
+            const uid = data?.user?.id || null;
+            if (!uid) return null;
+            return client.from('error_logs').insert([{
+              id: errorEntry.id,
+              error_type: errorEntry.type,
+              message: errorEntry.message,
+              stack_trace: errorEntry.stackTrace,
+              device_id: errorEntry.deviceId,
+              created_at: errorEntry.time,
+              owner_id: uid,
+              created_by: uid
+            }]);
+          }).then(({ error } = {}) => {
             if (error) console.warn("Could not send error telemetry to Supabase:", error.message);
           }).catch(() => {});
         }

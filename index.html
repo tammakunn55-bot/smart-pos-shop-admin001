@@ -162,21 +162,19 @@
 <input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-store-name" placeholder="เช่น ร้าน ช.เจริญกิจ" type="text"/>
 </div>
 <div>
+<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
+<input autocomplete="url" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-supabase-url" placeholder="https://xxxxx.supabase.co" type="url"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">anon / Publishable key</label>
+<input autocomplete="off" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-supabase-key" placeholder="eyJ... หรือ sb_publishable_..." type="password"/>
+</div>
+<div>
 <label class="text-xs font-bold text-slate-300 block mb-1">อีเมลเจ้าของร้าน</label>
 <input autocomplete="email" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-owner-email" placeholder="owner@example.com" type="email"/>
-<p class="text-[9px] text-slate-500 mt-1">ใช้อีเมลนี้เป็นบัญชี Owner ใน Supabase Auth และใช้เข้าสู่ระบบครั้งต่อไป</p>
 </div>
 <div>
-<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
-<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30 font-mono" id="setup-supabase-url" placeholder="https://xxxxx.supabase.co" type="url"/>
-</div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Publishable / anon key</label>
-<input autocomplete="off" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30 font-mono" id="setup-supabase-key" placeholder="sb_publishable_... หรือ anon key" type="password"/>
-<p class="text-[9px] text-slate-500 mt-1">ใช้เฉพาะ Publishable/anon key เท่านั้น ห้ามใช้ service_role หรือ sb_secret</p>
-</div>
-<div>
-<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่านเจ้าของร้าน</label>
+<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่าน Supabase</label>
 <input autocomplete="new-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-user-password" placeholder="อย่างน้อย 8 ตัวอักษร" type="password"/>
 </div>
 <div>
@@ -184,11 +182,11 @@
 <input autocomplete="new-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-user-password-confirm" placeholder="กรอกรหัสผ่านอีกครั้ง" type="password"/>
 </div>
 <div class="bg-indigo-500/10 border border-indigo-400/20 rounded-xl p-3 text-[10px] text-indigo-200 leading-relaxed">
-<b>สร้างร้านและบัญชี Owner ใน Supabase โดยตรง</b><br/>ข้อมูล Email/Password ใช้กับ Supabase Auth เท่านั้น ไม่บันทึกรหัสผ่านลง Local Storage และ Session จะถูกจำไว้โดย Supabase จนกว่าจะ Logout หรือหมดอายุ
+<b>ครั้งแรกเชื่อมต่อ Supabase ทันที</b><br/>ระบบจะสร้างบัญชีเจ้าของร้านใน Supabase Auth และสร้างข้อมูลร้านให้พร้อมใช้งาน การเข้าสู่ระบบครั้งต่อไปจะใช้ Session ของ Supabase และไม่ต้องพิมพ์รหัสผ่านซ้ำจนกว่าจะกดออกจากระบบหรือ Session หมดอายุ
 </div>
-<button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">✅ สร้างร้านและบัญชี Owner</button>
-<p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">Repository จะไม่มี Project URL/Key ของคุณติดอยู่ใน source ค่าเชื่อมต่อจะถูกบันทึกเฉพาะในเครื่องนี้</p>
-<button class="w-full text-center text-[11px] text-indigo-300 underline mt-4 btn-touch" onclick="document.getElementById('setup-fresh-fields').classList.add('hidden'); document.getElementById('setup-join-fields').classList.remove('hidden');" type="button">มีร้านอยู่แล้ว? เชื่อมต่อร้านเดิม</button>
+<button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">☁️ สร้างร้านและบัญชีเจ้าของ</button>
+<p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">ใช้เฉพาะ anon / Publishable key เท่านั้น <b>ห้ามใช้ service_role หรือ secret key</b></p>
+<button class="w-full text-center text-[11px] text-indigo-300 underline mt-4 btn-touch" onclick="document.getElementById('setup-fresh-fields').classList.add('hidden'); document.getElementById('setup-join-fields').classList.remove('hidden');" type="button">มีร้านอยู่แล้ว? เชื่อมต่ออุปกรณ์เครื่องนี้เข้ากับร้านเดิม</button>
 </div>
 <!-- โหมด "เชื่อมต่อร้านที่มีอยู่แล้ว" สำหรับติดตั้งบนเครื่องที่สอง/เครื่องพนักงาน โดยดึงข้อมูล
              ร้านจริงจากคลาวด์มาใช้ แทนที่จะสร้างร้านใหม่ว่างๆ ทับ -->
@@ -227,15 +225,15 @@
 <p class="mt-4 text-xs font-mono bg-white/10 px-3 py-1 rounded-full inline-block text-indigo-200 border border-white/10" id="device-id-badge">DEVICE: ---</p>
 <p class="mt-2 text-[10px] font-bold text-indigo-300" id="supabase-sync-badge">⚪ ยังไม่เคยซิงค์</p>
 </div>
-<p class="text-slate-400 text-sm mb-5 tracking-wide">เข้าสู่ระบบด้วยอีเมลและรหัสผ่านของบัญชี Supabase</p>
+<p class="text-slate-400 text-sm mb-5 tracking-wide">เข้าสู่ระบบด้วย ID และรหัสผ่านของร้านนี้</p>
 <div class="w-full max-w-sm space-y-3">
-<input autocomplete="username" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-owner-email" placeholder="owner@example.com" type="text"/>
-<input autocomplete="current-password" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-owner-password" onkeydown="if(event.key==='Enter') window.submitAccountLogin()" placeholder="Password" type="password"/>
+<input autocomplete="username" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-user-id" placeholder="User ID" type="text"/>
+<input autocomplete="current-password" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-user-password" onkeydown="if(event.key==='Enter') window.submitAccountLogin()" placeholder="Password" type="password"/>
 <button class="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 font-bold btn-touch" onclick="window.submitAccountLogin()">🔐 เข้าสู่ระบบ</button>
 <button class="w-full py-2 text-xs text-slate-500 hover:text-slate-300" onclick="window.lockCurrentAccount()">ออกจากบัญชี / เปลี่ยนฐานข้อมูล</button>
 </div>
 <div class="min-h-8 mt-4 flex items-center justify-center" id="account-login-error">
-<p class="text-rose-400 text-sm font-bold hidden" id="account-login-error-text">❌ อีเมลหรือรหัสผ่านไม่ถูกต้อง</p>
+<p class="text-rose-400 text-sm font-bold hidden" id="account-login-error-text">❌ ID หรือรหัสผ่านไม่ถูกต้อง</p>
 <p class="text-amber-400 text-sm font-bold hidden" id="account-login-lockout-text">🔒 บัญชีถูกล็อกชั่วคราว กรุณารอสักครู่</p>
 </div>
 </div>
@@ -948,7 +946,7 @@
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">2.</b><span><b>ตั้ง PIN เจ้าของร้าน</b> — เปิดหัวข้อ "👥 ผู้ใช้งานและความปลอดภัย" ตั้ง PIN 4 หลักไว้ล็อกหน้าจอและป้องกันการแก้ไขข้อมูลสำคัญ (ถ้ายังไม่ตั้ง ใครก็เปิดแก้ข้อมูลได้ทุกอย่าง)</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">3.</b><span><b>เพิ่มคนอื่นในครอบครัว/พนักงาน (ถ้ามี)</b> — ในหัวข้อเดียวกัน กด "เปิดหน้าจัดการผู้ใช้งาน" เพื่อให้แต่ละคนมี PIN ของตัวเอง ระบบจะบันทึกไว้ว่าใครทำรายการอะไร — <u>ถ้าใช้คนเดียว ข้ามขั้นตอนนี้ได้เลย</u> ไม่จำเป็นต้องสร้างผู้ใช้งานเพิ่ม PIN หลักก็ใช้งานได้ครบ</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">4.</b><span><b>เพิ่มสินค้า</b> — ไปที่หน้า "คลัง" กด "เพิ่มสินค้าใหม่" ทีละชิ้น หรือถ้ามีสินค้าเยอะ ใช้ปุ่มนำเข้าจากไฟล์ Excel/CSV แทน (ประหยัดเวลากว่ามาก)</span></li>
-<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>เชื่อมต่อ Supabase (ไม่บังคับ — ใส่แค่ตอนใช้หลายเครื่อง)</b> — ถ้าจะเปิดร้านจากมากกว่า 1 เครื่อง/เบราว์เซอร์ ให้เปิดหัวข้อ "🗄️ ฐานข้อมูลและการซิงค์ข้อมูล" กรอก Project URL และ anon key จาก Supabase แล้วกด "บันทึกและเชื่อมต่อ" — ถ้าเปิดจากเครื่องเดียวตลอด ข้ามได้เลย</span></li>
+<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>การเชื่อมต่อ Supabase</b> — ตั้งค่าครั้งแรกตอนสร้างร้าน แล้วระบบใช้ Supabase Session และซิงค์ข้อมูลอัตโนมัติในเบื้องหลัง</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">6.</b><span><b>เริ่มขายได้เลย</b> — กลับไปหน้า "ขาย" เปิดกะ (ถ้ายังไม่เปิด) แล้วเริ่มขายสินค้าได้ทันที</span></li>
 </ol>
 <div class="bg-white p-3 rounded-xl border border-amber-200 mt-3 text-[10px] text-slate-500 leading-relaxed">
@@ -1064,13 +1062,14 @@
 </details>
 <!-- ================= 3. DATABASE & SYNC ================= -->
 <details class="bg-teal-50 rounded-2xl border border-teal-200 overflow-hidden">
-<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1">🗄️ ฐานข้อมูลและการซิงค์ข้อมูล</summary>
+<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1">🗄️ ฐานข้อมูลและการเชื่อมต่อ</summary>
 <div class="p-4 pt-0 space-y-3">
 <div class="bg-white p-3 rounded-xl border border-teal-100">
-<h4 class="text-xs font-bold text-teal-800 mb-1">☁️ การเชื่อมต่อคลาวด์</h4>
-<p class="text-[9px] text-slate-500 leading-relaxed">ระบบเชื่อมต่อ Supabase อัตโนมัติหลัง Owner เข้าสู่ระบบ และใช้ Session ของ Supabase เพื่อจำบัญชีระหว่างการใช้งาน ไม่มีปุ่มบังคับซิงค์หรือการกรอก Password ซ้ำในหน้าตั้งค่า</p>
-<div class="mt-2 text-[10px] font-bold text-teal-700" id="settings-cloud-status">กำลังตรวจสอบสถานะ...</div>
-</div>
+<h4 class="text-xs font-bold text-teal-800 mb-1">สถานะการเชื่อมต่อร้าน</h4>
+<div id="supabase-connection-status" class="text-[10px] text-slate-500 leading-relaxed">กำลังตรวจสอบ Session...</div>
+<div id="supabase-connection-project" class="text-[9px] text-slate-400 font-mono mt-2 break-all"></div>
+<p class="text-[9px] text-slate-500 mt-2 leading-relaxed">ระบบจะเก็บเฉพาะ Project URL และ Publishable/anon key ที่จำเป็นสำหรับการเชื่อมต่อฝั่งเว็บ ไม่เก็บรหัสผ่าน Supabase ลงในเครื่อง และไม่ส่ง service_role/secret key ไปยัง GitHub</p>
+<button type="button" onclick="window.logoutSupabaseSession()" class="w-full py-2.5 mt-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[10px] btn-touch">🚪 ออกจากระบบ Supabase</button>
 </div>
 <!-- ================= ENTERPRISE TOOLS (NEW) ================= -->
 <div class="bg-white p-3 rounded-xl border border-indigo-200">

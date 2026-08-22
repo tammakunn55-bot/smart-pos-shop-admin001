@@ -373,15 +373,17 @@ window.__pendingProductImageStoragePath = null;
           // บังคับตั้งค่า Supabase ของตัวเองก่อนใช้งานครั้งแรกทุกเครื่อง — ไฟล์นี้ไม่มีฐานข้อมูล
           // เริ่มต้นแนบมาให้ในตัวไฟล์เลย (ตั้งใจ ไม่ใช่บั๊ก) เพื่อไม่ให้ใครก็ตามที่นำไฟล์นี้ไปใช้
           // ต่อเข้าฐานข้อมูลเดียวกันโดยไม่รู้ตัว ต้องกรอก Project URL + anon key ของตัวเองก่อนเสมอ
-          const hasSupabaseConfig = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
-          if (!hasSupabaseConfig) {
+          const hasSupabaseConfig = getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey();
+          const hasLocalAccount = !!(localStorage.getItem('POS_ACCOUNT_ID') || await localforage.getItem('POS_ACCOUNT_ID'));
+          // บัญชีผู้ใช้ต้องมีได้โดยไม่ต้องมีฐานข้อมูล เพื่อให้ทดสอบโปรแกรมก่อนเชื่อม Supabase จริง
+          if (!hasLocalAccount) {
             document.getElementById('lock-screen').style.display = 'none';
             const setupScreen = document.getElementById('first-time-setup-screen');
             setupScreen.classList.remove('hidden');
             setupScreen.classList.add('flex');
             const splash = document.getElementById('sync-splash-screen');
             if (splash) splash.remove();
-            return;
+            return; // หยุดตรงนี้ก่อน — ที่เหลือจะเริ่มทำงานหลังกด "บันทึกและเริ่มใช้งาน" แล้วโหลดหน้าใหม่
           }
 
           // HTTPS Warn Checking
@@ -403,15 +405,6 @@ window.__pendingProductImageStoragePath = null;
             db.settings = { ...DB_DEFAULT.settings, ...(raw.settings || {}) };
             db.counters = { ...DB_DEFAULT.counters, ...(raw.counters || {}) };
             window.db = db;
-          }
-
-          if (typeof window.restoreSupabaseSession === 'function') {
-            const restored = await window.restoreSupabaseSession();
-            if (restored) {
-              const splash = document.getElementById('sync-splash-screen');
-              if (splash) splash.remove();
-              return;
-            }
           }
 
           // ถ้ามีชื่อร้านที่กรอกไว้ตอนหน้าตั้งค่าเริ่มต้น (first-time-setup-screen) ให้เอามาใช้
@@ -487,10 +480,30 @@ window.__pendingProductImageStoragePath = null;
           setInterval(() => { if (typeof window.refreshPrivateStorageUrls === 'function') window.refreshPrivateStorageUrls().catch(() => {}); }, 45 * 60 * 1000);
 
           const lockScreen = document.getElementById('lock-screen');
-          if (lockScreen) {
-            // ห้ามปลดล็อกอัตโนมัติเมื่อมี Supabase เพราะต้องมี Auth session ก่อน RLS จะอนุญาต
+          let autoUnlocked = false;
+          try {
+            const configured = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
+            if (configured && typeof window.getSupabaseClient === 'function') {
+              const client = window.getSupabaseClient();
+              const { data: sessionData } = await client.auth.getSession();
+              const sessionUser = sessionData?.session?.user;
+              if (sessionUser) {
+                const owner = (db.users || []).find(u => u.role === 'owner') || (db.users || [])[0];
+                currentUserId = owner?.id || sessionUser.email || sessionUser.id;
+                currentUserName = owner?.name || sessionUser.user_metadata?.display_name || sessionUser.email || 'เจ้าของร้าน';
+                autoUnlocked = true;
+                if (lockScreen) lockScreen.style.display = 'none';
+                if (typeof window.updateSupabaseConnectionStatus === 'function') window.updateSupabaseConnectionStatus(true, sessionUser);
+                showToast('เข้าสู่ระบบอัตโนมัติแล้ว');
+              }
+            }
+          } catch (sessionErr) {
+            console.warn('Auto session restore failed:', sessionErr);
+          }
+          if (lockScreen && !autoUnlocked) {
             currentUserId = null;
             currentUserName = '';
+            if (typeof window.updateSupabaseConnectionStatus === 'function') window.updateSupabaseConnectionStatus(false, null);
             lockScreen.style.display = 'flex';
             setTimeout(() => document.getElementById('login-user-id')?.focus(), 80);
           }
@@ -744,50 +757,134 @@ window.__pendingProductImageStoragePath = null;
       }
 
       window.submitAccountLogin = async function() {
-        const emailEl = document.getElementById('login-owner-email');
-        const pwEl = document.getElementById('login-owner-password');
+        const idEl = document.getElementById('login-user-id');
+        const pwEl = document.getElementById('login-user-password');
         const errEl = document.getElementById('account-login-error-text');
         const lockEl = document.getElementById('account-login-lockout-text');
-        const email = (emailEl?.value || '').trim().toLowerCase();
+        const id = (idEl?.value || '').trim().toLowerCase();
         const password = pwEl?.value || '';
-        if (!email || !password) return;
-        if (!/^\S+@\S+\.\S+$/.test(email)) { if(errEl){errEl.textContent='❌ กรุณากรอกอีเมลให้ถูกต้อง';errEl.classList.remove('hidden');} return; }
-        if (accountLoginLockUntil > Date.now()) { lockEl?.classList.remove('hidden'); return; }
-        try {
-          const url=getConfiguredSupabaseUrl(), key=getConfiguredSupabaseAnonKey();
-          if(!url||!key) throw new Error('ยังไม่ได้ตั้งค่า Supabase');
-          const client=getSupabaseClient();
-          const {data,error}=await client.auth.signInWithPassword({email,password});
-          if(error||!data?.session) throw new Error(error?.message||'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-          localStorage.setItem('POS_ACCOUNT_ID',data.user.id.toLowerCase());
-          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL',email);
-          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID',data.user.id);
-          setConfiguredSupabase(url,key,data.user.id.toLowerCase());
-          const ok=await window.restoreSupabaseSession(true);
-          if(!ok) throw new Error('เข้าสู่ระบบสำเร็จ แต่ยังไม่พบข้อมูลร้านของบัญชีนี้');
-          accountLoginFailCount=0;
-          if(pwEl) pwEl.value='';
-          showToast('เข้าสู่ระบบสำเร็จ');
-        } catch(e) {
-          console.error('Supabase login failed:',e);
+        if (accountLoginLockUntil > Date.now()) {
+          if (lockEl) lockEl.classList.remove('hidden');
+          return;
+        }
+        if (!id || !password) return;
+        const user = (db.users || []).find(u => u.id === id && u.passwordHash && u.passwordSalt);
+        if (!user) {
           accountLoginFailCount++;
-          if(accountLoginFailCount>=5){accountLoginLockUntil=Date.now()+30000;accountLoginFailCount=0;lockEl?.classList.remove('hidden');setTimeout(()=>lockEl?.classList.add('hidden'),31000);}
-          else if(errEl){errEl.textContent='❌ '+(e?.message||'อีเมลหรือรหัสผ่านไม่ถูกต้อง');errEl.classList.remove('hidden');setTimeout(()=>errEl.classList.add('hidden'),3000);}
-          if(pwEl) pwEl.value='';
+          if (accountLoginFailCount >= 5) {
+            accountLoginLockUntil = Date.now() + 30000;
+            accountLoginFailCount = 0;
+            if (lockEl) lockEl.classList.remove('hidden');
+            setTimeout(() => lockEl?.classList.add('hidden'), 31000);
+          } else {
+            if (errEl) { errEl.classList.remove('hidden'); setTimeout(() => errEl.classList.add('hidden'), 1500); }
+          }
+          if (pwEl) pwEl.value = '';
+          return;
+        }
+        const hash = await hashPassword(password, user.passwordSalt);
+        if (hash !== user.passwordHash) {
+          accountLoginFailCount++;
+          if (accountLoginFailCount >= 5) {
+            accountLoginLockUntil = Date.now() + 30000;
+            accountLoginFailCount = 0;
+            if (lockEl) lockEl.classList.remove('hidden');
+            setTimeout(() => lockEl?.classList.add('hidden'), 31000);
+          } else if (errEl) {
+            errEl.classList.remove('hidden'); setTimeout(() => errEl.classList.add('hidden'), 1500);
+          }
+          if (pwEl) pwEl.value = '';
+          return;
+        }
+        // เชื่อมต่อ Supabase Auth เฉพาะเท่าที่จำเป็น:
+        // - ถ้ามี session ของร้านนี้ (ที่เคย login ไว้ก่อนหน้า) อยู่แล้วในเบราว์เซอร์ ไม่ต้อง
+        //   ยืนยันตัวซ้ำ ใช้ session เดิมต่อได้เลย
+        // - ถ้ายังไม่มี session: ลองใช้ "รหัสผ่าน Supabase ของร้าน" ที่บันทึกไว้ในเครื่องนี้ตอน
+        //   เจ้าของร้าน setup/เชื่อมต่อคลาวด์ (ไม่ใช่รหัส PIN ของพนักงานที่ login อยู่ตอนนี้) ยืนยัน
+        //   ตัวอัตโนมัติแบบพนักงานไม่ต้องรู้/กรอกรหัสนี้เอง — ทำให้พนักงานออนไลน์ได้ทันทีเหมือน
+        //   เจ้าของร้าน ตราบใดที่เครื่องนี้เคยเชื่อมต่อคลาวด์ไว้แล้วอย่างน้อยหนึ่งครั้ง (ตอน setup
+        //   หรือตอนกด "เชื่อมต่อร้านที่มีอยู่แล้ว")
+        // - ถ้าไม่มีรหัสร้านบันทึกไว้เลย (เครื่องนี้ไม่เคยเชื่อมต่อคลาวด์มาก่อน) และผู้ที่ login
+        //   เป็น owner ให้ลองรหัส PIN ที่กรอกแทน (เผื่อ owner ตั้งรหัสให้ตรงกันไว้)
+        // - ถ้ายังไม่สำเร็จเลยสักทาง ปล่อยให้เข้าใช้งานแบบออฟไลน์ชั่วคราว ไม่บล็อกการขายหน้าร้าน
+        const hasSupabase = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
+        let supabaseSessionReady = false;
+        if (hasSupabase) {
+          try {
+            const client = getSupabaseClient();
+            const { data: sessionData } = await client.auth.getSession();
+            supabaseSessionReady = !!sessionData?.session;
+          } catch (e) { supabaseSessionReady = false; }
+
+          if (!supabaseSessionReady) {
+            // Never recover or store a Supabase password locally.
+            // If the session expired, only an explicit owner authentication may reconnect.
+            if (user.role === 'owner') {
+              const authResult = await window.ensureSupabaseAuthForCurrentAccount(password);
+              supabaseSessionReady = !!authResult.ok;
+              // Password is intentionally not persisted.
+              if (!authResult.ok) {
+                if (errEl) { errEl.textContent = '❌ ไม่สามารถยืนยัน Supabase Auth ได้: ' + (authResult.reason || ''); errEl.classList.remove('hidden'); }
+                if (pwEl) pwEl.value = '';
+                return;
+              }
+            }
+          }
+        }
+        accountLoginFailCount = 0;
+        currentUserId = user.id;
+        currentUserName = user.name;
+        // หมายเหตุ: ไม่แก้ POS_ACCOUNT_ID ที่นี่โดยเจตนา — ตัวแปรนี้แทน "ร้าน/บัญชีที่โหลดอยู่บน
+        // เครื่องนี้" (กำหนดครั้งเดียวตอน setup/เชื่อมต่อร้านเท่านั้น) ส่วน currentUserId ด้านบนคือ
+        // "พนักงานคนไหนกำลังใช้งานอยู่ตอนนี้" คนละความหมายกัน การเซ็ต POS_ACCOUNT_ID = user.id ของ
+        // พนักงาน (โค้ดเดิม) ทำให้เครื่องหาฐานข้อมูล/การตั้งค่า Supabase ของบัญชีนี้ไม่เจอในการโหลด
+        // ครั้งถัดไป เพราะไม่เคยมีการสร้างข้อมูลไว้ภายใต้ user.id ของพนักงานเลย
+        if (pwEl) pwEl.value = '';
+        const lockScreen = document.getElementById('lock-screen');
+        if (lockScreen) {
+          lockScreen.style.opacity = '0';
+          setTimeout(() => { lockScreen.style.display = 'none'; lockScreen.style.opacity = '1'; }, 250);
+        }
+        showToast('เข้าสู่ระบบสำเร็จ: ' + user.name);
+        // แจ้งเจ้าของร้านครั้งเดียวถ้าเจอรายการซ้ำที่เกิดจากบั๊ก merge เดิม (แก้ต้นตอแล้ว แต่ผลพวง
+        // ที่เกิดไปแล้วในฐานข้อมูลต้องล้างด้วยมือทีหลัง ไม่ทำอัตโนมัติเพราะกระทบตัวเลขสต็อก ต้องให้
+        // เจ้าของร้านตัดสินใจเอง)
+        if (user.role === 'owner' && typeof window.scanMergeDuplicates === 'function') {
+          try {
+            const dupReport = window.scanMergeDuplicates();
+            const dupTotal = Object.values(dupReport).reduce((s, arr) => s + arr.length, 0);
+            if (dupTotal > 0) {
+              setTimeout(() => {
+                showToast(`⚠️ พบข้อมูลซ้ำ ${dupTotal} รายการจากบั๊ก sync เดิม กด "🧬 ล้างสินค้าซ้ำ" ที่หน้าคลังเพื่อล้างได้`);
+              }, 1500);
+            }
+          } catch (e) { /* ไม่ critical, ข้ามไปเงียบๆ ถ้าเช็คไม่ได้ */ }
+        }
+        if (hasSupabase && supabaseSessionReady) {
+          await checkAndPullNewerStateOnStartup();
+          // ดึงข้อมูลล่าสุดมาแล้ว ต่อด้วยการ push อีกครั้งเผื่อเครื่องนี้มีการแก้ไขที่ยังไม่ได้
+          // ซิงค์ค้างอยู่ (เช่น พนักงานใช้งานแบบออฟไลน์ก่อนหน้านี้ตอนยังไม่มี session) — ฟังก์ชันนี้
+          // เช็ค OCC/merge อยู่แล้วจึงปลอดภัยที่จะเรียกซ้ำแม้ไม่มีอะไรค้างจริง
+          if (typeof window.pushFullStateToSupabaseSafe === 'function') {
+            await window.pushFullStateToSupabaseSafe();
+          }
+        } else if (hasSupabase && !supabaseSessionReady) {
+          showToast('⚠️ ยังไม่ได้เชื่อมต่อคลาวด์ในเครื่องนี้ ข้อมูลจะบันทึกในเครื่องก่อน กรุณาให้เจ้าของร้าน (owner) เข้าสู่ระบบเพื่อเชื่อมต่อ');
         }
       };
 
       window.lockCurrentAccount = async function() {
-        try { if (typeof getSupabaseClient === 'function' && _supabaseClient) await _supabaseClient.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
+        try { if (_supabaseClient) await _supabaseClient.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
         _supabaseClient = null;
+        localStorage.removeItem('POS_ACCOUNT_ID');
         localStorage.removeItem('POS_SUPABASE_AUTH_USER_ID');
-        localStorage.removeItem('POS_SUPABASE_AUTH_EMAIL');
-        currentUserId = null; currentUserName = '';
+        currentUserId = null;
+        currentUserName = '';
+        const setupScreen = document.getElementById('first-time-setup-screen');
         const lockScreen = document.getElementById('lock-screen');
-        if (lockScreen) { lockScreen.style.display='flex'; lockScreen.style.opacity='1'; }
-        const emailEl=document.getElementById('login-owner-email'); if(emailEl) emailEl.value='';
-        const pwEl=document.getElementById('login-owner-password'); if(pwEl) pwEl.value='';
-        showToast('ออกจากระบบแล้ว');
+        if (lockScreen) lockScreen.style.display = 'none';
+        if (setupScreen) { setupScreen.classList.remove('hidden'); setupScreen.classList.add('flex'); }
+        showAlert('ออกจากบัญชี', 'การเปลี่ยนฐานข้อมูลควรทำบนเครื่อง/เบราว์เซอร์ของผู้ใช้คนนั้นโดยใช้ Supabase Project ของเขาเอง', false);
       };
 
       window.pressPin = async function(num) {

@@ -618,6 +618,14 @@ grant execute on all functions in schema public to authenticated;
 
 commit;
 
+-- Refresh PostgREST/Data API schema after installation.
+notify pgrst, 'reload schema';
+
+-- Verification: both values must be non-null after a successful run.
+select
+  to_regclass('public.app_accounts') as app_accounts,
+  to_regprocedure('public.create_pos_account(text,text)') as create_pos_account;
+
 -- ============================================================
 -- FIRST ACCOUNT SETUP
 -- ============================================================
