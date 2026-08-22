@@ -1,1374 +1,1801 @@
-/* js/supabase-integration.js */
+/* js/part3.js */
 // ==========================================
-// SUPABASE INTEGRATION (With Conflict Resolution, Force Sync & Granular Tables)
+// SMART POS PRO — PART 3 of 3 (plain <script>, no build step)
+// Excel import, settings, backup/restore, storage quota, archive, auto-backup, and the Database Validator/Health/Audit Log/Auto Repair/Versioning systems
+// Loaded in order via <script> tags in index.html — this file shares the
+// same global scope as the other parts, so functions/variables defined in
+// any part are usable from any other part. Load order in index.html matters
+// (Part 1 must load before Part 2, etc.) but call order does not — a
+// function only needs to EXIST by the time it's actually invoked (e.g. a
+// button click), not by the time the file that calls it was parsed.
 // ==========================================
-// Requires the Supabase JS client loaded first via CDN in index.html:
-//   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>
 
-// ⚠️ ไม่ควรใส่ Project URL / anon key จริงเป็นค่าเริ่มต้นตรงนี้ — ถ้ามีคนคัดลอกไฟล์นี้ไปใช้
-// (fork repo, โคลนโค้ด ฯลฯ) โดยไม่รู้ตัวจะเชื่อมต่อกับฐานข้อมูลจริงของเจ้าของเดิมทันทีโดยไม่ได้ตั้งใจ
-// ปล่อยว่างไว้ แล้วบังคับให้ตั้งค่าเองก่อนใช้งานครั้งแรกทุกเครื่อง/ทุกคนที่นำไฟล์นี้ไปใช้
-const SUPABASE_URL_DEFAULT = "";
-const SUPABASE_ANON_KEY_DEFAULT = "";
-// SECURITY: Never place service_role, sb_secret, real passwords, customer data, sales data,
-// backups, or uploaded documents in this source file. Public source may contain only the anon key.
+      // EXCEL / CSV QUICK IMPORT ENGINE
+      // ==========================================
+      // Each ROW represents either:
+      //  - a "MAIN" row: one size/variant of a product (ชื่อสินค้า + ขนาด + ทุน/ราคาขาย/สต็อก)
+      //  - a "FRACTION" row: one แบ่งขาย option that belongs to the size named in the same
+      //    "ขนาด" column of a MAIN row (matched by ชื่อสินค้า + ขนาด). This lets one flat
+      //    table fully represent multi-size products AND แบ่งขาย products, and lets
+      //    window.exportExcel() produce a file that re-imports into this same tool with all
+      //    columns auto-matched (see checkHeaderMatch rules below, which match this exact
+      //    wording first).
+      const fieldsToMap = [
+        { key: 'name', label: 'ชื่อสินค้าหลัก' },
+        { key: 'code', label: 'รหัสสินค้า (SKU)' },
+        { key: 'rowType', label: 'ประเภทแถว (ขนาดหลัก/แบ่งขาย)' },
+        { key: 'size', label: 'ขนาดสินค้า' },
+        { key: 'category', label: 'หมวดหมู่สินค้า' },
+        { key: 'groupName', label: 'กลุ่มสินค้า (การ์ดร่วม, ถ้ามี)' },
+        { key: 'barcode', label: 'รหัสบาร์โค้ด' },
+        { key: 'cost', label: 'ราคาทุน' },
+        { key: 'price', label: 'ราคาขาย (หรือราคาแบ่งขาย)' },
+        { key: 'stock', label: 'จำนวนสต็อก' },
+        { key: 'minStock', label: 'จุดสั่งซื้อขั้นต่ำ' },
+        { key: 'fractionName', label: 'ชื่อหน่วยแบ่งขาย' },
+        { key: 'fractionMultiplier', label: 'อัตราส่วนแบ่งขาย' },
+        { key: 'imageFile', label: 'ไฟล์รูปสินค้า' }
+      ];
 
-const SUPABASE_URL_STORAGE_KEY = 'pos_supabase_url';
-const SUPABASE_KEY_STORAGE_KEY = 'pos_supabase_anon_key';
+      function checkHeaderMatch(header, key) {
+        if (!header) return false;
+        header = header.toString().toLowerCase().trim();
 
-function getAccountScopedKey(base, accountId = null) {
-  const id = String(accountId || localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
-  return id ? `${base}::${id}` : base;
-}
-function readFirstLocalStorage(keys) {
-  for (const key of keys) {
-    try {
-      const value = String(localStorage.getItem(key) || '').trim();
-      if (value) return value;
-    } catch (_) {}
-  }
-  return '';
-}
-function getConfiguredSupabaseUrl(accountId = null) {
-  const scopedKey = getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId);
-  const scoped = readFirstLocalStorage([scopedKey]);
-  if (scoped) return scoped.replace(/\/$/, '');
-  // Backward compatibility: older Smart POS builds stored the same public
-  // project config without an account suffix. Reuse it and migrate it to the
-  // current account namespace instead of falsely reporting "cloud disconnected".
-  const legacy = readFirstLocalStorage([
-    SUPABASE_URL_STORAGE_KEY,
-    'POS_SUPABASE_URL',
-    'SUPABASE_URL',
-    'supabase_url'
-  ]);
-  if (legacy && accountId) {
-    try { localStorage.setItem(scopedKey, legacy.replace(/\/$/, '')); } catch (_) {}
-  }
-  return legacy.replace(/\/$/, '');
-}
-function getConfiguredSupabaseAnonKey(accountId = null) {
-  const scopedKey = getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId);
-  const scoped = readFirstLocalStorage([scopedKey]);
-  if (scoped) return scoped;
-  const legacy = readFirstLocalStorage([
-    SUPABASE_KEY_STORAGE_KEY,
-    'POS_SUPABASE_ANON_KEY',
-    'SUPABASE_ANON_KEY',
-    'SUPABASE_KEY',
-    'supabase_anon_key'
-  ]);
-  if (legacy && accountId) {
-    try { localStorage.setItem(scopedKey, legacy); } catch (_) {}
-  }
-  return legacy;
-}
-function setConfiguredSupabase(url, key, accountId = null) {
-  const cleanUrl = String(url || '').trim().replace(/\/$/, '');
-  const cleanKey = String(key || '').trim();
-  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), cleanUrl);
-  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), cleanKey);
-}
+        // เช็คตรงตัวกับหัวคอลัมน์ที่ window.exportExcel() สร้างเองก่อนเสมอ — คอลัมน์ใหม่บาง
+        // คอลัมน์มีคำคาบเกี่ยวกัน (เช่น "ชื่อหน่วยแบ่งขาย" มีคำว่า "ชื่อ" และ "ขาย" ปนอยู่ ซึ่งเป็น
+        // คำสำคัญของ "ชื่อสินค้า" และ "ราคาขาย" ด้วย, "กลุ่มสินค้า" มีคำว่า "สินค้า" ปนอยู่ด้วยเช่นกัน)
+        // ถ้าจับคู่แบบทายคำอย่างเดียวจะเดาผิดฟิลด์ได้ การเช็คตรงตัวก่อนจึงรับประกันว่าไฟล์ที่ส่งออก
+        // จากระบบเองจะจับคู่คอลัมน์ถูกทุกครั้งทันที โดยไม่ต้องจับคู่มือ ส่วนไฟล์จากภายนอกที่หัวคอลัมน์
+        // ไม่ตรงเป๊ะจะยังคงใช้การทายคำถัดไป
+        const exactHeaders = {
+          name: 'ชื่อสินค้า', code: 'รหัสสินค้า', rowType: 'ประเภทแถว', size: 'ขนาด', category: 'หมวดหมู่',
+          groupName: 'กลุ่มสินค้า', barcode: 'บาร์โค้ด', cost: 'ทุน', price: 'ราคาขาย', stock: 'สต็อก',
+          minStock: 'สต็อกขั้นต่ำ', fractionName: 'ชื่อหน่วยแบ่งขาย', fractionMultiplier: 'อัตราส่วนแบ่งขาย', imageFile: 'ไฟล์รูปสินค้า'
+        };
+        const exactMatchKey = Object.keys(exactHeaders).find(k => exactHeaders[k].toLowerCase() === header);
+        if (exactMatchKey) return exactMatchKey === key;
 
-// v2.2: one Supabase project/database is one store.
-function getStoreFingerprint(url) { try { return new URL(String(url||'')).hostname.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,40); } catch(e) { return ''; } }
-function getCurrentStoreFingerprint() { return String(localStorage.getItem('POS_STORE_FINGERPRINT')||'').trim(); }
+        const rules = {
+          name: ["ชื่อสินค้า", "ชื่อ", "name", "สินค้า", "product", "รายการ"],
+          code: ["รหัสสินค้า", "sku", "product code", "รหัสอ้างอิง"],
+          rowType: ["ประเภทแถว", "ประเภท", "rowtype", "row type", "type"],
+          size: ["ขนาด", "size", "รุ่น", "variant"],
+          category: ["หมวดหมู่", "category", "หมวด", "ประเภทสินค้า", "cat"],
+          groupName: ["กลุ่มสินค้า", "กลุ่ม", "group"],
+          barcode: ["บาร์โค้ด", "barcode", "รหัส", "code", "id"],
+          cost: ["ทุน", "cost", "ซื้อ", "ราคาส่ง"],
+          price: ["ราคาขาย", "ขาย", "ราคา", "price", "ปลีก"],
+          stock: ["สต็อก", "stock", "จำนวน", "คงเหลือ", "qty", "quantity", "ชิ้น"],
+          minStock: ["ขั้นต่ำ", "min", "reorder", "เกณฑ์", "เตือน"],
+          fractionName: ["ชื่อหน่วยแบ่งขาย", "หน่วยแบ่งขาย", "fraction name", "fractionname"],
+          fractionMultiplier: ["อัตราส่วนแบ่งขาย", "อัตราส่วน", "multiplier", "fraction"],
+          imageFile: ["ไฟล์รูปสินค้า", "รูปสินค้า", "image file", "image", "รูป"]
+        };
+        // ถ้าหัวคอลัมน์เข้าเงื่อนไข "สต็อกขั้นต่ำ" (มีคำว่า "ขั้นต่ำ") ให้ตัดสิทธิ์ฟิลด์ "สต็อก" ทั่วไป
+        // ออกก่อน เพราะ "สต็อกขั้นต่ำ" มีคำว่า "สต็อก" ปนอยู่ด้วยเช่นกัน (ทายคำซ้อนกัน)
+        if (key === 'stock' && rules.minStock.some(term => header.includes(term))) return false;
 
-// Supabase Auth password is NEVER persisted locally.
-// Reconnection relies on the normal Supabase Auth session; if the session expires,
-// the user must authenticate again.
-
-window.completeFirstTimeSetup = async function () {
-  const storeName = document.getElementById('setup-store-name')?.value.trim() || '';
-  const ownerEmail = document.getElementById('setup-owner-email')?.value.trim().toLowerCase() || '';
-  const urlInput = document.getElementById('setup-supabase-url')?.value.trim() || '';
-  const keyInput = document.getElementById('setup-supabase-key')?.value.trim() || '';
-  const password = document.getElementById('setup-user-password')?.value || '';
-  const passwordConfirm = document.getElementById('setup-user-password-confirm')?.value || '';
-
-  if (!storeName) return alert('กรุณาระบุชื่อร้าน');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) return alert('กรุณากรอกอีเมลเจ้าของร้านให้ถูกต้อง');
-  if (password.length < 8) return alert('รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร');
-  if (password !== passwordConfirm) return alert('รหัสผ่านยืนยันไม่ตรงกัน');
-
-  let client = null;
-  try {
-    const url = String(urlInput || getConfiguredSupabaseUrl() || SUPABASE_URL_DEFAULT || '').trim().replace(/\/$/, '');
-    const key = String(keyInput || getConfiguredSupabaseAnonKey() || SUPABASE_ANON_KEY_DEFAULT || '').trim();
-
-    if (!url || !key) return alert('กรุณากรอก Supabase Project URL และ Publishable/anon key');
-    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return alert('Supabase Project URL ไม่ถูกต้อง');
-    if (/service_role|sb_secret|postgres(ql)?:\/\/|password\s*=/i.test(key)) return alert('ค่าที่กรอกมีลักษณะเป็น Secret/Database credential ซึ่งห้ามใช้ใน Frontend');
-
-    // Runtime-only configuration: never written to source files or GitHub.
-    setConfiguredSupabase(url, key, ownerEmail);
-    localStorage.setItem('POS_ACCOUNT_ID', ownerEmail);
-
-    client = window.supabase.createClient(url, key, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-    });
-    _supabaseClient = client;
-
-    const authResult = await client.auth.signUp({
-      email: ownerEmail,
-      password,
-      options: {
-        data: { username: ownerEmail, full_name: storeName + ' เจ้าของร้าน', store_name: storeName }
+        return rules[key] ? rules[key].some(term => header.includes(term)) : false;
       }
-    });
 
-    if (authResult.error) {
-      // If the account already exists, sign in rather than creating a duplicate.
-      const signIn = await client.auth.signInWithPassword({ email: ownerEmail, password });
-      if (signIn.error || !signIn.data?.user) {
-        throw new Error('สร้าง/เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (authResult.error.message || signIn.error?.message || 'ไม่ทราบสาเหตุ'));
-      }
-      authResult.data = signIn.data;
-    }
+      window.handleBulkFileUpload = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
 
-    const user = authResult.data?.user;
-    const session = authResult.data?.session;
+        const reader = new FileReader();
+        const fileExtension = file.name.split('.').pop().toLowerCase();
 
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + ownerEmail, ownerEmail);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', ownerEmail);
-    if (user?.id) {
-      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + ownerEmail, user.id);
-      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', user.id);
-    }
-
-    if (!user) throw new Error('Supabase ไม่คืนข้อมูลผู้ใช้');
-
-    // With email confirmation enabled Supabase may return a user without a session.
-    // In that case store the pending store name and finish store creation after verification/login.
-    let storeId = null;
-    if (session) {
-      const { data, error } = await client.rpc('create_store', { p_name: storeName, p_code: null });
-      if (error) throw new Error('สร้างร้านบน Supabase ไม่สำเร็จ: ' + error.message);
-      storeId = data;
-    } else {
-      localStorage.setItem('PENDING_STORE_NAME', storeName);
-      localStorage.setItem('PENDING_OWNER_EMAIL', ownerEmail);
-      alert('สร้างบัญชี Supabase แล้ว กรุณายืนยันอีเมลก่อน แล้วกลับมาเข้าสู่ระบบอีกครั้ง ระบบจะสร้างร้านให้อัตโนมัติ');
-    }
-
-    const accountId = ownerEmail;
-    const freshDb = JSON.parse(JSON.stringify(DB_DEFAULT));
-    freshDb.storeName = storeName;
-    freshDb.storeId = storeId || '';
-    freshDb.users = [{
-      id: accountId,
-      authUserId: user.id,
-      name: storeName + ' เจ้าของร้าน',
-      role: 'owner',
-      email: ownerEmail,
-      createdAt: new Date().toISOString()
-    }];
-
-    await localforage.removeItem(DB_KEY_BASE);
-    await localforage.setItem(getAccountDbKey(accountId), freshDb);
-    await localforage.setItem('POS_ACCOUNT_ID', accountId);
-    await localforage.setItem('POS_FIRST_SETUP_DONE', true);
-
-    localStorage.setItem('POS_ACCOUNT_ID', accountId);
-    if (storeId) localStorage.setItem('POS_STORE_ID', storeId);
-    setConfiguredSupabase(url, key, accountId);
-    localStorage.removeItem(LAST_SYNCED_KEY);
-
-    if (session && typeof window.finishFirstTimeSetupInMemory === 'function') {
-      await window.finishFirstTimeSetupInMemory(accountId, ownerEmail);
-      alert('สร้างร้าน "' + storeName + '" สำเร็จและเชื่อมต่อ Supabase แล้ว');
-    } else if (typeof window.showLogin === 'function') {
-      window.showLogin();
-    }
-  } catch (err) {
-    console.error('First setup failed:', err);
-    try { await client?.auth?.signOut?.(); } catch (_) {}
-    alert('สร้างร้านไม่สำเร็จ: ' + (err?.message || err));
-  }
-};
-
-// เชื่อมต่ออุปกรณ์เครื่องที่สอง (หรือเครื่องพนักงาน) เข้ากับร้านที่มีอยู่แล้วบนคลาวด์ แทนที่จะ
-// สร้าง DB_DEFAULT ว่างๆ ทับ — ยืนยันตัวด้วยอีเมล/รหัสผ่านของ "เจ้าของร้าน" (คนเดียวที่ผูก
-// Supabase Auth ไว้) หนึ่งครั้ง ดึง pos_state ฉบับเต็มมาเก็บเป็นฐานข้อมูลของเครื่องนี้ แล้วให้
-// เครื่องนี้ล็อกอินด้วย PIN ของพนักงานแต่ละคนตามปกติในครั้งถัดๆ ไป (เหมือนเครื่องแรก)
-window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppliedEmail = null) {
-  try {
-    const accountId = String(localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
-    if (!accountId) return { ok: false, reason: 'missing_account' };
-    const client = getSupabaseClient();
-    if (!client) return { ok: false, reason: 'cloud_not_configured' };
-
-    // IMPORTANT: if the owner is already authenticated, reuse the persisted
-    // Supabase session. Never ask for the password or sign in again on every
-    // POS start/action. Supabase Auth refreshes the session automatically.
-    const existing = await client.auth.getSession();
-    const existingUser = existing?.data?.session?.user || null;
-    if (existingUser?.id) {
-      const meta = existingUser.user_metadata || {};
-      const rememberedAuthId = localStorage.getItem('POS_SUPABASE_AUTH_USER_ID::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_USER_ID') || '';
-      const sameAccount = !meta.username || String(meta.username).toLowerCase() === accountId;
-      const sameRememberedUser = !rememberedAuthId || String(rememberedAuthId) === String(existingUser.id);
-      if (sameAccount && sameRememberedUser) {
-        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, existingUser.id);
-        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', existingUser.id);
-        if (existingUser.email) {
-          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, existingUser.email);
-          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', existingUser.email);
-        }
-        return { ok: true, user: existingUser, session: existing.data.session, reusedSession: true };
-      }
-    }
-
-    // No usable remembered session: only now is a password required.
-    if (!password) return { ok: false, reason: 'missing_credentials' };
-    const email = String(suppliedEmail || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL') || '').trim().toLowerCase();
-    if (!email) return { ok: false, reason: 'missing_email' };
-
-    let result = await client.auth.signInWithPassword({ email, password });
-    if (!result.error && result.data?.session) {
-      const meta = result.data.user.user_metadata || {};
-      if (meta.username && String(meta.username).toLowerCase() !== accountId) {
-        await client.auth.signOut();
-        return { ok: false, reason: 'บัญชี Supabase นี้ถูกผูกกับ User ID อื่น' };
-      }
-      localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, email);
-      localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
-      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, result.data.user.id);
-      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', result.data.user.id);
-      return { ok: true, user: result.data.user, session: result.data.session };
-    }
-
-    // ถ้ายังไม่เคยสร้าง Auth ใน Project นี้ ให้สร้างครั้งแรก
-    const signUp = await client.auth.signUp({
-      email,
-      password,
-      options: { data: { username: accountId, store_name: db.storeName || '' } }
-    });
-    if (signUp.error) return { ok: false, reason: signUp.error.message };
-    if (!signUp.data?.session || !signUp.data?.user) {
-      return { ok: false, reason: 'email_confirmation_required' };
-    }
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, email);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, signUp.data.user.id);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', signUp.data.user.id);
-    return { ok: true, user: signUp.data.user, session: signUp.data.session };
-  } catch (e) {
-    console.error('Supabase Auth error:', e);
-    return { ok: false, reason: e.message || String(e) };
-  }
-};
-
-
-// ============================================================
-// REMEMBERED SUPABASE SESSION
-// Never stores a password. Supabase persists/refreshes the Auth
-// session in the browser. On reload, restore the matching local
-// POS user from the active Auth session.
-// ============================================================
-window.restoreRememberedSupabaseLogin = async function () {
-  try {
-    const ready = await window.ensureSupabaseClientReady({ requireSession:false });
-    if (!ready.ok || !ready.client) return { ok:false, reason:ready.reason || 'cloud_not_configured' };
-    const client = ready.client;
-    const { data: sessionData, error: sessionError } = await client.auth.getSession();
-    if (sessionError || !sessionData?.session?.user) return { ok:false, reason:'no_session' };
-
-    const authUser = sessionData.session.user;
-    const rememberedId = String(localStorage.getItem('POS_LAST_LOGIN_USER_ID') || '').trim().toLowerCase();
-    const users = Array.isArray(window.db?.users) ? window.db.users : [];
-    let localUser = rememberedId
-      ? users.find(u => String(u.id || '').toLowerCase() === rememberedId)
-      : null;
-
-    if (!localUser) {
-      localUser = users.find(u =>
-        (u.supabaseAuthUserId && String(u.supabaseAuthUserId) === String(authUser.id)) ||
-        (u.email && String(u.email).toLowerCase() === String(authUser.email || '').toLowerCase())
-      );
-    }
-    if (!localUser) return { ok:false, reason:'session_user_not_found' };
-
-    if (localUser.supabaseAuthUserId &&
-        String(localUser.supabaseAuthUserId) !== String(authUser.id)) {
-      return { ok:false, reason:'session_user_mismatch' };
-    }
-
-    const store = typeof window.refreshStoreContext === 'function'
-      ? await window.refreshStoreContext()
-      : null;
-    if (!store) return { ok:false, reason:'store_context_unavailable' };
-
-    return {
-      ok:true,
-      user:localUser,
-      store,
-      session:sessionData.session
-    };
-  } catch (e) {
-    console.warn('[Auth] remembered session restore failed:', e);
-    return { ok:false, reason:e?.message || 'restore_failed' };
-  }
-};
-
-window.refreshStoreContext = async function () {
-  try {
-    const client = getSupabaseClient();
-    const { data, error } = await client.rpc('get_my_store');
-    if (error) throw error;
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row?.store_id) return null;
-    localStorage.setItem('POS_STORE_ID', row.store_id);
-    localStorage.setItem('POS_STORE_NAME', row.store_name || db.storeName || '');
-    localStorage.setItem('POS_STORE_ROLE', row.role || 'staff');
-    return row;
-  } catch (e) {
-    console.warn('Store context unavailable:', e);
-    return null;
-  }
-};
-
-window.ensureSupabaseAuthForMember = async function(email, password) {
-  const client = getSupabaseClient();
-  if (!email || !password) return { ok:false, reason:'missing_member_credentials' };
-  const result = await client.auth.signInWithPassword({ email, password });
-  if (result.error || !result.data?.session) return { ok:false, reason: result.error?.message || 'member_auth_failed' };
-  const store = await window.refreshStoreContext();
-  if (!store) {
-    await client.auth.signOut();
-    return { ok:false, reason:'บัญชีสมาชิกยังไม่ได้รับสิทธิ์เข้าร้านนี้' };
-  }
-  return { ok:true, user:result.data.user, session:result.data.session, store };
-};
-
-window.provisionStoreMemberAuth = async function(email, password, role='staff') {
-  if (!getConfiguredSupabaseUrl() || !getConfiguredSupabaseAnonKey()) return { ok:false, reason:'cloud_not_configured' };
-  if (!email || !password) throw new Error('สมาชิก Cloud ต้องมีอีเมลและรหัสผ่านอย่างน้อย 8 ตัวอักษร');
-  const ownerClient = getSupabaseClient();
-  const { data: current } = await ownerClient.auth.getUser();
-  if (!current?.user) throw new Error('ต้องเข้าสู่ระบบเจ้าของร้านก่อนเพิ่มสมาชิก');
-  const ownerSession = (await ownerClient.auth.getSession()).data?.session;
-  const temp = window.supabase.createClient(getConfiguredSupabaseUrl(), getConfiguredSupabaseAnonKey(), { auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false} });
-  const signUp = await temp.auth.signUp({ email, password, options:{ data:{ display_name: email.split('@')[0] } } });
-  if (signUp.error) throw signUp.error;
-  const memberId = signUp.data?.user?.id;
-  if (!memberId) throw new Error('Supabase ไม่คืนรหัสสมาชิก');
-  const { error: addErr } = await ownerClient.rpc('add_store_member', { p_user_id: memberId, p_role: role === 'manager' ? 'manager' : 'staff' });
-  if (addErr) throw addErr;
-  // The temporary client never persists the member session; the owner session remains intact.
-  return { ok:true, userId:memberId, email };
-};
-
-window.processSaleAtomicOnline = async function(payload) {
-  const client = getSupabaseClient();
-  const { data, error } = await client.rpc('process_sale_atomic', { p_payload: payload });
-  if (error) throw error;
-  return data;
-};
-
-
-
-window.loadCodeConfigIntoForm = function () {
-  ['customer', 'supplier', 'category'].forEach(type => {
-    const cfg = db.codeConfig[type];
-    document.getElementById(`codecfg-${type}-prefix`).value = cfg.prefix;
-    document.getElementById(`codecfg-${type}-digits`).value = cfg.digits;
-    document.getElementById(`codecfg-${type}-next`).value = db.counters[type];
-  });
-  window.updateCodeConfigPreview();
-  ['customer', 'supplier', 'category'].forEach(type => {
-    ['prefix', 'digits', 'next'].forEach(field => {
-      document.getElementById(`codecfg-${type}-${field}`).oninput = window.updateCodeConfigPreview;
-    });
-  });
-};
-
-window.updateCodeConfigPreview = function () {
-  const examples = ['customer', 'supplier', 'category'].map(type => {
-    const prefix = document.getElementById(`codecfg-${type}-prefix`).value || '';
-    const digits = parseInt(document.getElementById(`codecfg-${type}-digits`).value) || 1;
-    const next = parseInt(document.getElementById(`codecfg-${type}-next`).value) || 1;
-    return prefix + String(next).padStart(digits, '0');
-  });
-  document.getElementById('codecfg-preview').innerText = `ลูกค้า: ${examples[0]}  •  ซัพพลายเออร์: ${examples[1]}  •  หมวดหมู่: ${examples[2]}`;
-};
-
-window.saveCodeConfig = function () {
-  ['customer', 'supplier', 'category'].forEach(type => {
-    const prefix = document.getElementById(`codecfg-${type}-prefix`).value.trim();
-    const digits = Math.max(1, parseInt(document.getElementById(`codecfg-${type}-digits`).value) || 1);
-    const next = Math.max(1, parseInt(document.getElementById(`codecfg-${type}-next`).value) || 1);
-    db.codeConfig[type] = { prefix, digits };
-    db.counters[type] = next;
-  });
-  persist();
-  showToast('บันทึกรูปแบบรหัสอัตโนมัติเรียบร้อย');
-};
-
-let _supabaseClient = null;
-let _supabaseAuthSubscription = null;
-let _supabaseBootPromise = null;
-
-function getActiveAccountId() {
-  return String(
-    localStorage.getItem('POS_ACCOUNT_ID') ||
-    localStorage.getItem('POS_STORE_ID') ||
-    ''
-  ).trim();
-}
-
-function resolveSupabaseConfig() {
-  const accountId = getActiveAccountId();
-  let url = getConfiguredSupabaseUrl(accountId);
-  let key = getConfiguredSupabaseAnonKey(accountId);
-
-  // Accept config already exposed by the host page/app shell, but never a secret key.
-  if ((!url || !key) && window.SMARTPOS_SUPABASE_CONFIG) {
-    url = url || String(window.SMARTPOS_SUPABASE_CONFIG.url || '').trim();
-    key = key || String(window.SMARTPOS_SUPABASE_CONFIG.anonKey || '').trim();
-  }
-  if ((!url || !key) && window.__SMARTPOS_SUPABASE__) {
-    url = url || String(window.__SMARTPOS_SUPABASE__.url || '').trim();
-    key = key || String(window.__SMARTPOS_SUPABASE__.anonKey || '').trim();
-  }
-
-  if (!url || !key) return null;
-  if (/service_role|sb_secret/i.test(key)) return null;
-  if (!/^https:\/\/[^\s/]+\.supabase\.co(?:\/.*)?$/i.test(url)) return null;
-  return { url: url.replace(/\/$/, ''), key, accountId };
-}
-
-function getSupabaseClient() {
-  if (_supabaseClient) return _supabaseClient;
-  const cfg = resolveSupabaseConfig();
-  if (!cfg) return null;
-  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return null;
-
-  _supabaseClient = window.supabase.createClient(cfg.url, cfg.key, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: false,
-      flowType: 'pkce'
-    }
-  });
-
-  if (!_supabaseAuthSubscription) {
-    const result = _supabaseClient.auth.onAuthStateChange((event, session) => {
-      window.POS_SUPABASE_SESSION = session || null;
-      window.POS_SUPABASE_AUTH_STATE = event;
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
-        if (session?.user?.id) {
-          const accountId = getActiveAccountId();
-          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', session.user.id);
-          if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, session.user.id);
-          if (session.user.email) {
-            localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', session.user.email);
-            if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, session.user.email);
-          }
-        }
-      }
-      if (event === 'SIGNED_OUT') {
-        window.POS_SUPABASE_SESSION = null;
-      }
-      try { window.dispatchEvent(new CustomEvent('smartpos:supabase-auth', { detail: { event, session } })); } catch (_) {}
-    });
-    _supabaseAuthSubscription = result?.data?.subscription || null;
-  }
-  return _supabaseClient;
-}
-window.getSupabaseClient = getSupabaseClient;
-
-window.ensureSupabaseClientReady = async function (options = {}) {
-  const requireSession = options.requireSession !== false;
-  if (_supabaseBootPromise) return _supabaseBootPromise;
-  _supabaseBootPromise = (async () => {
-    const client = getSupabaseClient();
-    if (!client) return { ok:false, reason:'cloud_not_configured', client:null, session:null };
-    try {
-      const { data, error } = await client.auth.getSession();
-      if (error) return { ok:false, reason:error.message || 'session_check_failed', client, session:null };
-      const session = data?.session || null;
-      window.POS_SUPABASE_SESSION = session;
-      if (requireSession && !session) return { ok:false, reason:'not_authenticated', client, session:null };
-      return { ok:true, client, session };
-    } catch (e) {
-      return { ok:false, reason:e?.message || 'client_not_ready', client, session:null };
-    } finally {
-      _supabaseBootPromise = null;
-    }
-  })();
-  return _supabaseBootPromise;
-};
-
-window.getSupabaseSession = async function () {
-  const client = getSupabaseClient();
-  if (!client) return null;
-  try {
-    const { data } = await client.auth.getSession();
-    window.POS_SUPABASE_SESSION = data?.session || null;
-    return data?.session || null;
-  } catch (_) { return null; }
-};
-
-window.refreshSupabaseSession = async function () {
-  const client = getSupabaseClient();
-  if (!client) return { ok:false, reason:'cloud_not_configured' };
-  try {
-    const { data, error } = await client.auth.refreshSession();
-    if (error) return { ok:false, reason:error.message || 'refresh_failed' };
-    window.POS_SUPABASE_SESSION = data?.session || null;
-    return { ok:true, session:data?.session || null };
-  } catch (e) { return { ok:false, reason:e?.message || 'refresh_failed' }; }
-};
-
-// Boot once per page. This does NOT sign in, ask for a password, or contact a
-// different project. It only restores the persisted Supabase session for the
-// already configured store.
-window.initSupabaseAuth = async function () {
-  return window.ensureSupabaseClientReady({ requireSession:false });
-};
-
-// Initialize after the Supabase CDN is available and after localStorage is ready.
-(function bootSupabaseAuth() {
-  const run = () => { try { window.initSupabaseAuth(); } catch (_) {} };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once:true });
-  else run();
-})();
-
-// ------------------------------------------
-// DECOUPLED SYNC & GRANULAR RELATIONAL TABLE SUPPORT
-// ------------------------------------------
-// Allows syncing specific modules to their own respective database tables in Supabase 
-// without needing to rewrite the entire JSON state bloat on every transaction.
-window.syncGranularTablesToSupabase = async function (domain) {
-    const client = getSupabaseClient();
-    if (!client || !window.db) return false;
-
-    try {
-        if (domain === 'products') {
-            await window.syncProductsToSupabase(true); // Call existing quiet mode sync
-        } 
-        else if (domain === 'bills') {
-            // Find bills that haven't been successfully synced yet
-            const unSyncedBills = window.db.bills.filter(b => !b.supabaseSynced);
-            if (unSyncedBills.length === 0) return true;
-
-            const ownerId = (await client.auth.getUser()).data?.user?.id;
-            if (!ownerId) throw new Error('ยังไม่ได้เข้าสู่ระบบ Supabase');
-            const payload = unSyncedBills.map(b => ({
-                id: b.id,
-                owner_id: ownerId,
-                time: new Date(b.time).toISOString(),
-                total: b.total,
-                method: b.method,
-                customer_id: b.customerId === 'GENERAL' ? null : b.customerId,
-                payload_json: b 
-            }));
-
-            const { error } = await client.from('bills').upsert(payload, { onConflict: 'id' });
-            if (error) throw error;
-            unSyncedBills.forEach(b => b.supabaseSynced = true);
-            if (typeof window.persist === 'function') window.persist();
-        }
-        else if (domain === 'cash_ledger') {
-            const unSyncedLedger = window.db.cashLedger.filter(tx => !tx.supabaseSynced);
-            if (unSyncedLedger.length === 0) return true;
-
-            const ownerId = (await client.auth.getUser()).data?.user?.id;
-            if (!ownerId) throw new Error('ยังไม่ได้เข้าสู่ระบบ Supabase');
-            const payload = unSyncedLedger.map(tx => ({
-                id: tx.id,
-                owner_id: ownerId,
-                date: tx.date,
-                description: tx.description,
-                income: tx.income || 0,
-                expense: tx.expense || 0,
-                type: tx.type,
-                ref_id: tx.refId || null
-            }));
-
-            const { error } = await client.from('cash_ledger').upsert(payload, { onConflict: 'id' });
-            if (error) throw error;
-            unSyncedLedger.forEach(tx => tx.supabaseSynced = true);
-            if (typeof window.persist === 'function') window.persist();
-        }
-        else if (domain === 'shifts') {
-             const unSyncedShifts = window.db.shifts.filter(s => !s.supabaseSynced);
-             if (unSyncedShifts.length === 0) return true;
-             
-             const ownerId = (await client.auth.getUser()).data?.user?.id;
-             if (!ownerId) throw new Error('ยังไม่ได้เข้าสู่ระบบ Supabase');
-             const payload = unSyncedShifts.map(s => ({
-                 id: s.id,
-                 owner_id: ownerId,
-                 start_time: new Date(s.startTime).toISOString(),
-                 end_time: s.endTime ? new Date(s.endTime).toISOString() : null,
-                 cash_on_hand: s.cashOnHand,
-                 payload_json: s
-             }));
-             const { error } = await client.from('shifts').upsert(payload, { onConflict: 'id' });
-             if (error) throw error;
-             unSyncedShifts.forEach(s => s.supabaseSynced = true);
-             if (typeof window.persist === 'function') window.persist();
-        }
-        
-        return true;
-    } catch (err) {
-        console.error(`Granular sync failed for domain [${domain}]:`, err);
-        return false;
-    }
-};
-
-window.decoupledPersist = function(domains = []) {
-    // 1. Immediately persist local state (Storage)
-    if (typeof window.persist === 'function') {
-        window.persist();
-    }
-    
-    // 2. Perform decoupled async sync for granular relational tables
-    if (domains && domains.length > 0) {
-        domains.forEach(domain => {
-            window.syncGranularTablesToSupabase(domain);
-        });
-    } else {
-        // Fallback: sync all known modular tables if none specified
-        ['bills', 'cash_ledger', 'shifts'].forEach(d => window.syncGranularTablesToSupabase(d));
-    }
-};
-
-// ------------------------------------------
-// PUSH PRODUCTS TO SUPABASE (Granular)
-// ------------------------------------------
-window.syncProductsToSupabase = async function (isQuiet = false) {
-  if (typeof window.guardOnce === 'function' && !window.guardOnce('syncProductsToSupabase')) return;
-
-  const executeSync = async () => {
-      if (!isQuiet) showToast("กำลังซิงค์ข้อมูลสินค้าไป Supabase...");
-      try {
-        const products = Object.values(db.products);
-        const authUser = (await getSupabaseClient().auth.getUser()).data?.user;
-        if (!authUser) throw new Error('ยังไม่ได้เข้าสู่ระบบ Supabase');
-        const owner_id = authUser.id;
-
-        const categoryRows = db.categories.map(c => ({ owner_id, id: c.id, name: c.name, icon: c.icon, color: c.color }));
-        if (categoryRows.length > 0) {
-          const { error } = await getSupabaseClient().from('categories').upsert(categoryRows);
-          if (error) throw new Error('categories: ' + error.message);
-        }
-
-        const productRows = products.map(p => ({
-          owner_id,
-          id: p.id,
-          name: p.name,
-          category_id: null,
-          icon: p.image || '',
-          image_url: p.imageStoragePath || null,
-          is_deleted: !!p.isDeleted
-        }));
-        if (productRows.length > 0) {
-          const { error } = await getSupabaseClient().from('products').upsert(productRows);
-          if (error) throw new Error('products: ' + error.message);
-        }
-
-        const nameToId = {};
-        db.categories.forEach(c => { nameToId[c.name] = c.id; });
-        const categoryLinkRows = [];
-        products.forEach(p => (p.cat || []).forEach(catName => {
-          if (nameToId[catName]) categoryLinkRows.push({ owner_id, product_id: p.id, category_id: nameToId[catName] });
-        }));
-
-        const productIds = products.map(p => p.id);
-        if (productIds.length > 0) {
-          const { error: delErr } = await getSupabaseClient().from('product_categories').delete().in('product_id', productIds);
-          if (delErr && delErr.code !== '42P01') throw new Error('product_categories (clear): ' + delErr.message);
-        }
-        if (categoryLinkRows.length > 0) {
-          const { error } = await getSupabaseClient().from('product_categories').insert(categoryLinkRows);
-          if (error && error.code !== '42P01') throw new Error('product_categories: ' + error.message);
-        }
-
-        const variantRows = [];
-        products.forEach(p => (p.variants || []).forEach(v => {
-          variantRows.push({
-            owner_id,
-            id: v.id,
-            product_id: p.id,
-            size_name: v.sizeName,
-            barcode: v.barcode || null,
-            cost: roundAmt(v.cost),
-            price: roundAmt(v.price),
-            stock: roundStock(v.stock),
-            min_stock: roundStock(v.minStock)
-          });
-        }));
-        if (variantRows.length > 0) {
-          const { error } = await getSupabaseClient().from('product_variants').upsert(variantRows);
-          if (error) throw new Error('product_variants: ' + error.message);
-        }
-
-        const fractionRows = [];
-        products.forEach(p => (p.variants || []).forEach(v => (v.fractions || []).forEach(f => {
-          fractionRows.push({
-            owner_id,
-            id: f.id,
-            variant_id: v.id,
-            fraction_name: f.fractionName,
-            multiplier: roundStock(f.fractionMultiplier),
-            fraction_price: roundAmt(f.fractionPrice)
-          });
-        })));
-        if (fractionRows.length > 0) {
-          const { error } = await getSupabaseClient().from('product_fractions').upsert(fractionRows);
-          if (error) throw new Error('product_fractions: ' + error.message);
-        }
-
-        if (typeof window.logTransaction === 'function' && !isQuiet) {
-          window.logTransaction('SUPABASE_SYNC', { productCount: productRows.length, variantCount: variantRows.length });
-        }
-        if (!isQuiet) showAlert("ซิงค์สำเร็จ", `ส่งข้อมูลสินค้า ${productRows.length} รายการ ไป Supabase เรียบร้อยแล้ว`, false);
-      } catch (err) {
-        console.error("Supabase sync error:", err);
-        if (!isQuiet) showAlert("ซิงค์ไม่สำเร็จ", "เกิดข้อผิดพลาด: " + err.message, true);
-      }
-  };
-
-  if (isQuiet) {
-      await executeSync();
-  } else {
-      window.showCustomConfirm(
-        "ซิงค์สินค้าทั้งหมดไป Supabase?",
-        "ระบบจะเขียนทับข้อมูลสินค้า/ขนาด/หน่วยแบ่งขายทั้งหมดใน Supabase ให้ตรงกับข้อมูลในเครื่องนี้",
-        executeSync
-      );
-  }
-};
-
-// Resizes + re-encodes an image file before upload so phone-camera photos
-// (often 3-8 MB each) don't balloon Storage usage. Non-image files (PDFs
-// etc.) are returned untouched. Falls back to the original file if anything
-// about compression fails, so an upload never breaks because of this step.
-window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
-  return new Promise((resolve) => {
-    if (!file || !file.type || !file.type.startsWith('image/') || file.type === 'image/gif') {
-      return resolve(file); // don't touch non-images or animated GIFs
-    }
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      let { width, height } = img;
-      if (width <= maxDim && height <= maxDim && file.size < 400 * 1024) {
-        return resolve(file); // already small enough, skip re-encoding
-      }
-      const scale = Math.min(1, maxDim / Math.max(width, height));
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
-      const canvas = document.createElement('canvas');
-      canvas.width = width; canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob((blob) => {
-        if (!blob) return resolve(file);
-        const newName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
-        resolve(new File([blob], newName, { type: 'image/jpeg' }));
-      }, 'image/jpeg', quality);
-    };
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
-    img.src = objectUrl;
-  });
-};
-
-window.uploadProductImageToSupabase = async function (file, productId) {
-  if (!file) throw new Error('ไม่พบไฟล์รูป');
-  if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '') || file.size > 5 * 1024 * 1024) {
-    throw new Error('รูปสินค้าต้องเป็น JPG/PNG/WebP และมีขนาดไม่เกิน 5 MB');
-  }
-
-  // IMPORTANT: getSupabaseClient() intentionally returns null when the current
-  // account has no saved cloud configuration. Never call .auth/.storage on null.
-  const client = getSupabaseClient();
-  if (!client) {
-    throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูลร้านบนคลาวด์สำหรับบัญชีนี้ กรุณาเข้าสู่ระบบ/เชื่อมต่อร้านก่อนนำเข้ารูป');
-  }
-
-  try {
-    const compressed = await window.compressImageFile(file);
-    const ext = (compressed.name.split('.').pop() || 'jpg').toLowerCase();
-    const { data: authData, error: authError } = await client.auth.getUser();
-    if (authError) throw new Error('ตรวจสอบผู้ใช้ Supabase ไม่สำเร็จ: ' + authError.message);
-    const user = authData?.user;
-    if (!user) throw new Error('ไม่มี Supabase Session ที่ใช้งานอยู่ กรุณาเข้าสู่ระบบร้านอีกครั้งก่อนนำเข้ารูป');
-
-    const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
-    const safeProductId = String(productId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
-    if (!safeProductId) throw new Error('ไม่พบรหัสสินค้า');
-    const randomId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
-    const path = `${storeId}/products/${safeProductId}-${randomId}.${ext}`;
-
-    const { error: uploadError } = await client.storage
-      .from('product-images')
-      .upload(path, compressed, { upsert: false, contentType: compressed.type || undefined });
-    if (uploadError) throw uploadError;
-
-    // Signed URL is only for display; path is the durable value saved to the product.
-    const { data, error } = await client.storage.from('product-images').createSignedUrl(path, 3600);
-    if (error) throw error;
-    return { url: data?.signedUrl || '', path };
-  } catch (err) {
-    console.error('Image upload error:', err);
-    if (typeof showAlert === 'function') showAlert('อัปโหลดรูปไม่สำเร็จ', 'เกิดข้อผิดพลาด: ' + (err.message || err), true);
-    throw err;
-  }
-};
-
-window.handleProductImageUpload = async function (event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const label = document.getElementById('p-image-upload-label');
-  const originalLabel = label ? label.innerText : '';
-  if (label) label.innerText = 'กำลังอัปโหลด...';
-
-  const editIdInput = document.getElementById('edit-p-id');
-  const productId = (editIdInput ? editIdInput.value : '') || 'NEW-' + Date.now();
-  const uploadResult = await window.uploadProductImageToSupabase(file, productId);
-  const url = uploadResult?.url || null;
-
-  if (label) label.innerText = originalLabel;
-  event.target.value = '';
-
-  if (url) {
-    const pObj = db.products[productId];
-    if (uploadResult?.path) window.__pendingProductImageStoragePath = uploadResult.path;
-    if (pObj && uploadResult?.path) pObj.imageStoragePath = uploadResult.path;
-    const urlInput = document.getElementById('p-image-url');
-    if (urlInput) urlInput.value = url;
-    if (typeof window.previewProductImageUrl === 'function') window.previewProductImageUrl();
-    showToast('อัปโหลดรูปสำเร็จ');
-  }
-};
-
-// ==========================================
-// PRODUCT IMAGE CACHE
-// เก็บ Blob ตาม storage path ถาวร; Signed URL ใช้เป็นเพียงช่องทางดาวน์โหลด
-// ==========================================
-const PRODUCT_IMAGE_CACHE_NAME='smartpos-product-images-v1';
-function productImageCacheKey(path){const store=String(localStorage.getItem('POS_STORE_ID')||'local').trim().toLowerCase();return `https://smartpos.local/cache/${encodeURIComponent(store)}/${encodeURIComponent(String(path||''))}`;}
-window.cacheProductImage=async function(path,signedUrl){try{if(!path||!signedUrl||!('caches'in window))return false;const r=await fetch(signedUrl,{cache:'no-store'});if(!r.ok)return false;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME);await c.put(productImageCacheKey(path),new Response(await r.blob(),{headers:{'Content-Type':r.headers.get('Content-Type')||'image/jpeg'}}));return true;}catch(_){return false;}};
-window.getCachedProductImage=async function(path){try{if(!path||!('caches'in window))return null;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME),r=await c.match(productImageCacheKey(path));if(!r)return null;return URL.createObjectURL(await r.blob());}catch(_){return null;}};
-window.clearProductImageCache=async function(){try{if('caches'in window)await caches.delete(PRODUCT_IMAGE_CACHE_NAME);}catch(_){}};
-
-// ==========================================
-// PRIVATE STORAGE URL REFRESH
-// Signed URLs are never persisted as the security credential. Only storage paths are durable.
-// ==========================================
-window.__lastStorageUrlRefreshAt = 0;
-window.refreshProductImageUrl = async function (productId, preferCache = true) {
-  try {
-    const p=db?.products?.[productId]; if(!p?.imageStoragePath)return false;
-    if(preferCache&&window.getCachedProductImage){const cached=await window.getCachedProductImage(p.imageStoragePath);if(cached){p.imageUrl=cached;return true;}}
-    const client=getSupabaseClient(); if(!client)return false;
-    const {data,error}=await client.storage.from('product-images').createSignedUrl(p.imageStoragePath,3600);
-    if(error||!data?.signedUrl)return false;
-    p.imageUrl=data.signedUrl;
-    await window.cacheProductImage?.(p.imageStoragePath,data.signedUrl);
-    return true;
-  } catch(e){console.warn('Product image URL refresh failed:',e);return false;}
-};window.refreshPrivateStorageUrls = async function (force = false) {
-  try {
-    const products=Object.values(db.products||{}).filter(p=>p.imageStoragePath);
-    const missing=[];
-    for(const p of products){
-      if(!force&&p.imageUrl)continue;
-      const cached=await window.getCachedProductImage?.(p.imageStoragePath);
-      if(cached)p.imageUrl=cached;else missing.push(p);
-    }
-    if(!missing.length)return true;
-    const client=getSupabaseClient();if(!client)return false;
-    const paths=missing.map(p=>p.imageStoragePath);
-    if(typeof client.storage.from('product-images').createSignedUrls==='function'){
-      for(let i=0;i<paths.length;i+=1000){
-        const chunk=paths.slice(i,i+1000);
-        const {data,error}=await client.storage.from('product-images').createSignedUrls(chunk,3600);
-        if(!error&&Array.isArray(data))await Promise.all(data.map(async(r,j)=>{if(!r?.signedUrl)return;const p=missing[i+j];if(!p)return;p.imageUrl=r.signedUrl;await window.cacheProductImage?.(p.imageStoragePath,r.signedUrl);}));
-      }
-    }else{for(const p of missing)await window.refreshProductImageUrl(p.id,false);}
-    if(window.persist)window.persist();return true;
-  }catch(e){console.warn('Storage URL refresh skipped:',e);return false;}
-};// ==========================================
-// AUTOMATIC FULL-STATE SYNC (With OCC Conflict Check)
-// ==========================================
-const POS_STATE_ROW_ID = 'main';
-const LAST_SYNCED_KEY = 'pos_last_synced_at';
-
-// Debounce Global state sync
-let _pushDebounceTimer = null;
-const _originalPersistForSync = window.persist;
-window.persist = function (...args) {
-  const result = _originalPersistForSync ? _originalPersistForSync.apply(this, args) : undefined;
-  clearTimeout(_pushDebounceTimer);
-  _pushDebounceTimer = setTimeout(() => {
-    if (typeof window.pushFullStateToSupabaseSafe === 'function') {
-      window.pushFullStateToSupabaseSafe();
-    }
-  }, 2500);
-  return result;
-};
-
-// ==========================================
-// SAFE MERGE ENGINE FOR SYNC CONFLICTS
-// ==========================================
-// Replaces "abort or Force Sync (overwrite the whole remote db)" with a
-// per-record merge, so a conflict between two devices/staff sessions can no
-// longer silently delete data the other side already saved. This matters even
-// more now that staff can legitimately work "offline" on a device that hasn't
-// re-authenticated to Supabase yet (see submitAccountLogin) — their changes
-// need to merge cleanly once the owner reconnects, not get wiped.
-//
-// Merge rules per top-level key in `db` (see DB_DEFAULT above):
-//  - Array-of-records keyed by `id` (bills, shifts, cashLedger, categories,
-//    users, pendingSyncs, pos, documents): union by id. Identical content on
-//    both sides -> keep one copy. Same id, DIFFERENT content -> keep BOTH;
-//    the local record is kept under a renamed id (`<id>-conflict-<ts>`,
-//    flagged `_mergeConflict:true` / `_originalId`) so nothing is ever
-//    silently discarded.
-//  - Dictionary-of-records keyed by object key (products, customers,
-//    suppliers): same by-key union + rename-on-conflict rule.
-//  - counters: take the MAX of local vs remote per counter, so an id either
-//    device already issued is never reused after the merge.
-//  - Everything else (storeName, settings, security/PIN state, promptPayId,
-//    schemaVersion, codeConfig, currentShift, ...): singleton config, not
-//    meaningfully mergeable field-by-field -> remote wins (it's the side
-//    that triggered the conflict). Local's own copy is preserved in the
-//    pre-merge backup snapshot taken in applyMergedStateAndPush below.
-window.mergeDbStates = function (localDb, remoteDb) {
-  const conflicts = [];
-  const merged = {};
-
-  const ARRAY_KEYED_COLLECTIONS = ['bills', 'shifts', 'cashLedger', 'categories', 'users', 'pendingSyncs', 'pos', 'documents'];
-  const DICT_KEYED_COLLECTIONS = ['products', 'customers', 'suppliers'];
-
-  function sameContent(a, b) {
-    try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
-  }
-
-  // ⚠️ เวอร์ชันก่อนหน้าตรงนี้เคย "duplicate เป็นเรคคอร์ดใหม่" ทุกครั้งที่ id เดียวกันมีเนื้อหาต่าง
-  // กัน — ฟังดูปลอดภัย แต่ในทางปฏิบัติ field อย่าง "สต็อกสินค้า" เปลี่ยนแทบทุกครั้งที่มีการขาย
-  // พอ 2 เครื่อง sync ชนกันบ่อยๆ (เรื่องปกติเวลามีหลายเครื่องขายพร้อมกัน) สินค้า 1 รายการเดิม
-  // จะถูกโคลนซ้ำไปเรื่อยๆ ทุกครั้งที่ conflict เกิด — สินค้าจริง ~2,000 รายการ กลายเป็นหลักหมื่น
-  // รายการได้ในเวลาไม่นาน นี่คือสาเหตุของปัญหาที่เจอ แก้เป็น "remote wins" สำหรับ record เดิมที่
-  // มีอยู่แล้วทั้งสองฝั่งแทน (ไม่สร้างซ้ำอีกต่อไป) ส่วน record ที่มีอยู่แค่ฝั่งเดียว (สินค้า/บิลใหม่ที่
-  // เพิ่งสร้าง ยังไม่เคย sync) ยังคงถูก union เข้ามาตามปกติ ปลอดภัยเหมือนเดิม ไม่มีการลบข้อมูลจริง
-  // ที่ต่างกันแค่ไม่ union สอง version เข้าด้วยกันแบบสร้างแถวใหม่อีกต่อไป
-  function mergeArrayCollection(key, localArr, remoteArr) {
-    localArr = Array.isArray(localArr) ? localArr : [];
-    remoteArr = Array.isArray(remoteArr) ? remoteArr : [];
-    const byId = new Map();
-    remoteArr.forEach(rec => { if (rec && rec.id != null) byId.set(rec.id, rec); });
-    localArr.forEach(rec => {
-      if (!rec || rec.id == null) return; // skip malformed records rather than crash the merge
-      if (!byId.has(rec.id)) { byId.set(rec.id, rec); return; } // only exists locally -> keep it (union)
-      const remoteRec = byId.get(rec.id);
-      if (sameContent(rec, remoteRec)) return; // identical both sides, nothing to do
-      // มีอยู่ทั้งสองฝั่งแต่เนื้อหาต่างกัน -> ใช้ฝั่ง remote (ไม่ duplicate) แค่บันทึกไว้ให้ตรวจสอบ
-      conflicts.push({ collection: key, id: rec.id, note: 'ใช้ข้อมูลฝั่ง remote (ค่าบางฟิลด์ เช่น สต็อก ต่างกันระหว่างสองเครื่อง)' });
-    });
-    return Array.from(byId.values());
-  }
-
-  function mergeDictCollection(key, localDict, remoteDict) {
-    localDict = localDict && typeof localDict === 'object' ? localDict : {};
-    remoteDict = remoteDict && typeof remoteDict === 'object' ? remoteDict : {};
-    const out = { ...remoteDict };
-    Object.keys(localDict).forEach(id => {
-      const localRec = localDict[id];
-      if (!(id in out)) { out[id] = localRec; return; } // only exists locally -> keep it (union)
-      if (sameContent(localRec, out[id])) return;
-      conflicts.push({ collection: key, id, note: 'ใช้ข้อมูลฝั่ง remote (ค่าบางฟิลด์ เช่น สต็อก ต่างกันระหว่างสองเครื่อง)' });
-      // out[id] คือฝั่ง remote อยู่แล้ว ไม่ต้องทำอะไรเพิ่ม (ไม่ทับด้วย localRec, ไม่สร้างซ้ำ)
-    });
-    return out;
-  }
-
-  const allKeys = new Set([...Object.keys(localDb || {}), ...Object.keys(remoteDb || {})]);
-  allKeys.forEach(key => {
-    const localVal = localDb ? localDb[key] : undefined;
-    const remoteVal = remoteDb ? remoteDb[key] : undefined;
-
-    if (ARRAY_KEYED_COLLECTIONS.includes(key)) {
-      merged[key] = mergeArrayCollection(key, localVal, remoteVal);
-    } else if (DICT_KEYED_COLLECTIONS.includes(key)) {
-      merged[key] = mergeDictCollection(key, localVal, remoteVal);
-    } else if (key === 'counters') {
-      const localCounters = localVal || {};
-      const remoteCounters = remoteVal || {};
-      const counterKeys = new Set([...Object.keys(localCounters), ...Object.keys(remoteCounters)]);
-      const mergedCounters = {};
-      counterKeys.forEach(ck => {
-        const lv = localCounters[ck], rv = remoteCounters[ck];
-        if (typeof lv === 'number' && typeof rv === 'number') {
-          mergedCounters[ck] = Math.max(lv, rv);
-        } else {
-          mergedCounters[ck] = (rv !== undefined) ? rv : lv; // e.g. lastBillDate string -> remote wins
-        }
-      });
-      merged[key] = mergedCounters;
-    } else {
-      merged[key] = (remoteVal !== undefined) ? remoteVal : localVal;
-    }
-  });
-
-  return { merged, conflicts };
-};
-
-// Applies a merged db locally (with a safety backup first), persists it, then
-// pushes it up as the new authoritative remote state. If anything throws at
-// any point, the merge attempt simply fails and the caller falls back to the
-// old manual Force Sync flow — the original local db is never left corrupted.
-window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
-  try {
-    const pf = window.__pushFailState || {};
-    const skipBackupDownload = pf.lastBackupAt && (Date.now() - pf.lastBackupAt < 5 * 60 * 1000);
-    // ถ้าเพิ่งดาวน์โหลด backup ไปเมื่อไม่ถึง 5 นาทีที่แล้ว (เช่นกำลังวน retry ซ้ำๆ จากปัญหาเดิม)
-    // ไม่ต้องเด้งหน้าต่างดาวน์โหลดไฟล์ซ้ำรัวๆ ให้รำคาญ — in-app snapshot ยังทำทุกครั้งอยู่ดี
-    // (เบากว่า ไม่รบกวนผู้ใช้)
-    if (!skipBackupDownload && typeof window.downloadJSONFile === 'function') {
-      window.downloadJSONFile(db, 'PreMerge_Safety');
-      if (window.__pushFailState) window.__pushFailState.lastBackupAt = Date.now();
-    }
-    if (typeof window.saveInAppBackupSnapshot === 'function') {
-      await window.saveInAppBackupSnapshot();
-    }
-
-    window.db = mergedDb;
-    if (typeof db !== 'undefined') { db = window.db; }
-
-    if (typeof window.persist === 'function') window.persist();
-    if (typeof renderAll === 'function') renderAll();
-    if (typeof updateShiftUI === 'function') updateShiftUI();
-    if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
-
-    if (conflicts && conflicts.length > 0) {
-      try { localStorage.setItem('pos_last_merge_conflicts', JSON.stringify({ time: new Date().toISOString(), conflicts })); } catch (e) {}
-      if (typeof window.logSystemError === 'function') {
-        window.logSystemError('SYNC_MERGE_CONFLICTS', `พบ ${conflicts.length} รายการที่ค่าบางฟิลด์ต่างกันระหว่างสองเครื่อง (ใช้ค่าฝั่ง remote)`, JSON.stringify(conflicts).slice(0, 1000));
-      }
-      // ไม่ต้องรบกวนผู้ใช้ด้วย alert ทุกครั้งที่เจอความต่างเล็กๆ (เช่น สต็อกไม่ตรงกันเพราะขายคนละ
-      // รอบ) เพราะเกิดขึ้นเป็นปกติเวลามีหลายเครื่องขายพร้อมกัน — log ไว้เงียบๆ ให้ตรวจสอบทีหลังพอ
-      // (ดูได้ที่ 🚨 บันทึกข้อผิดพลาดของระบบ หรือ localStorage key 'pos_last_merge_conflicts')
-    }
-
-    const pushed = await window.pushFullStateToSupabaseSafe(true);
-    return pushed;
-  } catch (err) {
-    console.error("[Merge Engine] Failed to apply merged state:", err);
-    if (typeof window.logSystemError === 'function') {
-      window.logSystemError('MERGE_APPLY_FAILED', err.message, err.stack);
-    }
-    return false;
-  }
-};
-
-// Safe Push Function with Optimistic Concurrency Control (OCC)
-// ==========================================
-// PUSH FAILURE BACKOFF (กันลูปยิงซ้ำไม่หยุด)
-// ==========================================
-// ปัญหาที่เจอ: ถ้า push ล้มเหลว (เช่น "TypeError: Load failed" ตอนข้อมูลก้อนใหญ่เกินไป)
-// applyMergedStateAndPush จะเรียก persist() ซึ่งไปตั้ง debounce timer ให้ push รอบใหม่อัตโนมัติ
-// อีก 2.5 วิ — ถ้าสาเหตุที่แท้จริงยังไม่หาย (เช่น payload ใหญ่เกิน) รอบใหม่ก็จะล้มเหลวซ้ำ แล้ว
-// เรียก persist() อีก วนแบบนี้ไม่จบ ผลคือ error log/หน้าต่างดาวน์โหลด backup/popup "Data Conflict"
-// เด้งรัวๆ ทุก 2-3 วินาทีไม่หยุดตามที่เจอในรายงานปัญหา
-// ทางแก้: ใส่ cooldown แบบ exponential backoff หลัง push ล้มเหลว และจำกัดไม่ให้ backup/dialog
-// เด้งซ้ำถี่เกินไปในช่วง cooldown เดียวกัน
-window.__pushFailState = { failCount: 0, cooldownUntil: 0, lastDialogAt: 0, lastBackupAt: 0 };
-
-window.pushFullStateToSupabaseSafe = async function (force = false) {
-  const pf = window.__pushFailState;
-  if (!force && Date.now() < pf.cooldownUntil) {
-    // ยังอยู่ในช่วง cooldown จากความล้มเหลวรอบก่อน ข้ามเงียบๆ ไม่ยิง network ซ้ำ ไม่ log ซ้ำ
-    return false;
-  }
-  try {
-    if (!localStorage.getItem('POS_ACCOUNT_ID') || !getConfiguredSupabaseUrl() || !getConfiguredSupabaseAnonKey()) return false;
-    const client = getSupabaseClient();
-    if (!client) return false;
-
-    // เช็ค session ก่อนเสมอ (อ่านจากหน่วยความจำ/localStorage ไม่ยิง network) — ถ้ายังไม่มี
-    // session เลย (เช่น พนักงานทำงานแบบออฟไลน์ตามที่ระบบอนุญาตไว้ตอน login) ให้ออกจากฟังก์ชัน
-    // เงียบๆ ทันที ไม่ยิง network เปล่าประโยชน์ (ฟังก์ชันนี้ถูกเรียกทุกครั้งที่มีการบันทึกข้อมูล
-    // ผ่าน persist() debounce 2.5 วิ ถ้าไม่เช็คก่อน จะยิง request ไปเช็ค updated_at ทุกครั้งทั้งที่
-    // รู้อยู่แล้วว่าไม่มี session จะ push ไม่ได้อยู่ดี) และไม่ log เป็น error เพราะสถานะนี้ไม่ใช่
-    // ข้อผิดพลาด เป็นสถานะที่ตั้งใจให้เกิดได้ตามปกติ — เดิมเคย log 'PUSH_FAILED' ทุกครั้งที่พนักงาน
-    // ออฟไลน์บันทึกอะไรสักอย่าง ทำให้ error log เต็มไปด้วยข้อความที่ไม่ใช่ error จริง จน error จริงๆ
-    // ที่ควรเห็นถูกกลบหายไป
-    const { data: sessionData } = await client.auth.getSession();
-    if (!sessionData?.session) {
-      updateSyncStatusBadge('offline', null);
-      return false;
-    }
-
-    // เช็คขนาดข้อมูลก่อน push เสมอ — ระบบ full-state sync ส่งฐานข้อมูลทั้งก้อนทุกครั้ง ถ้าร้าน
-    // มีสินค้า/รูปเยอะมาก (เช่นหลายพันรายการ) payload อาจใหญ่จนเบราว์เซอร์/เน็ตมือถือส่งไม่สำเร็จ
-    // (fetch ล้มเหลวแบบ "TypeError: Load failed") ถ้าไม่เช็คก่อน ระบบจะพยายามซ้ำไม่รู้จบ
-    let payloadSizeMB = 0;
-    try { payloadSizeMB = new Blob([JSON.stringify(db)]).size / (1024 * 1024); } catch (e) {}
-    if (payloadSizeMB > 8) {
-      pf.failCount++;
-      pf.cooldownUntil = Date.now() + 10 * 60 * 1000; // ข้อมูลใหญ่เกินไป ไม่มีประโยชน์จะลองถี่ๆ รอ 10 นาที
-      if (typeof window.logSystemError === 'function') {
-        window.logSystemError('PUSH_PAYLOAD_TOO_LARGE', `ขนาดข้อมูล ~${payloadSizeMB.toFixed(1)}MB ใหญ่เกินกว่าจะ sync แบบ full-state ได้อย่างเสถียร`);
-      }
-      if (Date.now() - pf.lastDialogAt > 5 * 60 * 1000 && typeof window.showAlert === 'function') {
-        pf.lastDialogAt = Date.now();
-        window.showAlert(
-          "⚠️ ข้อมูลใหญ่เกินกว่าจะซิงค์ได้",
-          `ฐานข้อมูลตอนนี้มีขนาดประมาณ ${payloadSizeMB.toFixed(1)} MB ใหญ่เกินกว่าระบบซิงค์แบบปัจจุบันจะส่งได้เสถียร มักเกิดจากมีสินค้าซ้ำซ้อนสะสมอยู่มาก\n\nแนะนำ: ไปที่หน้าคลังสินค้า กด "🧬 ล้างสินค้าซ้ำ" ก่อน แล้วลองซิงค์ใหม่อีกครั้ง`,
-          true
-        );
-      }
-      return false;
-    }
-
-    const lastKnownSync = localStorage.getItem(LAST_SYNCED_KEY);
-    const nowIso = new Date().toISOString();
-
-    if (!force) {
-      const { data: remoteData, error: fetchErr } = await client
-        .from('pos_state')
-        .select('updated_at')
-        .eq('id', POS_STATE_ROW_ID)
-        .maybeSingle();
-
-      if (!fetchErr && remoteData && remoteData.updated_at) {
-        const remoteTime = new Date(remoteData.updated_at).getTime();
-        const localKnownTime = lastKnownSync ? new Date(lastKnownSync).getTime() : 0;
-
-        if (remoteTime > localKnownTime + 1000) {
-          console.warn("[Conflict Engine] Supabase has newer state. Attempting automatic per-record merge instead of a blind overwrite.");
-
-          if (typeof window.logSystemError === 'function') {
-            window.logSystemError('SYNC_CONFLICT', `Remote updated at ${remoteData.updated_at}, local known was ${lastKnownSync}`);
-          }
-
-          updateSyncStatusBadge('offline', null);
-
-          // Try to resolve automatically via the merge engine first. This can only
-          // ADD data (union of both sides, conflicting records kept as flagged
-          // duplicates) — it never deletes anything either side already had, so
-          // it's safe to attempt without asking. If fetching/merging fails for any
-          // reason (including the remote row belonging to a different Supabase
-          // Auth account, which must never be merged in), fall through to the
-          // original manual Force-Sync-or-abort dialog.
+        reader.onload = function(e) {
           try {
-            const { data: authCheck } = await client.auth.getUser();
-            const { data: fullRemote, error: fullFetchErr } = await client
-              .from('pos_state')
-              .select('data, updated_at, owner_id')
-              .eq('id', POS_STATE_ROW_ID)
-              .maybeSingle();
-
-            if (fullFetchErr || !fullRemote || !fullRemote.data) throw new Error('ไม่สามารถดึงข้อมูลฉบับเต็มจาก Supabase เพื่อนำมารวมได้');
-            if (fullRemote.owner_id && authCheck?.user?.id && fullRemote.owner_id !== authCheck.user.id) {
-              throw new Error('ข้อมูลใน Supabase เป็นของบัญชีอื่น ไม่สามารถรวมข้อมูลอัตโนมัติได้');
+            const data = new Uint8Array(e.target.result);
+            let workbook;
+            
+            if (fileExtension === 'csv') {
+              let decodedText;
+              try {
+                const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+                decodedText = utf8Decoder.decode(data);
+              } catch (err) {
+                const winDecoder = new TextDecoder('windows-874');
+                decodedText = winDecoder.decode(data);
+              }
+              workbook = XLSX.read(decodedText, { type: 'string' });
+            } else {
+              workbook = XLSX.read(data, { type: 'array' });
             }
 
-            const { merged, conflicts } = window.mergeDbStates(db, fullRemote.data);
-            const pushed = await window.applyMergedStateAndPush(merged, conflicts);
-            if (pushed) return true;
-            throw new Error('รวมข้อมูลสำเร็จแต่ push ขึ้น Supabase ไม่สำเร็จ');
-          } catch (mergeErr) {
-            console.error("[Conflict Engine] Automatic merge failed, falling back to manual Force Sync prompt:", mergeErr);
-            if (typeof window.logSystemError === 'function') {
-              window.logSystemError('SYNC_MERGE_FAILED', mergeErr.message, mergeErr.stack);
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+
+            if (json.length < 2) return showAlert("ไฟล์ไม่มีข้อมูล", "ไม่พบข้อมูลสำหรับประมวลผลภายในตารางของไฟล์นี้", true);
+            
+            uploadedHeaders = json[0].map(h => (h || '').toString().trim());
+            uploadedRows = json.slice(1).filter(row => row && row.some(cell => cell !== null && cell !== undefined && cell !== ''));
+            showMappingSetup();
+          } catch (err) {
+            console.error(err);
+            showAlert("ข้อผิดพลาดการอ่านข้อมูล", "เกิดปัญหาขัดข้องขณะถอดรหัสโครงสร้างตารางของไฟล์นี้", true);
+          }
+        };
+        
+        reader.readAsArrayBuffer(file);
+      };
+
+      window.openQuickCommandModal = function() {
+        document.getElementById('command-input').value = "";
+        document.getElementById('import-preview-area').innerHTML = "";
+        document.getElementById('preview-actions-bar').classList.add('hidden');
+        document.getElementById('import-hint').classList.add('hidden');
+        document.getElementById('import-mapping-sec').classList.add('hidden');
+        document.getElementById('btn-confirm-import').classList.add('hidden');
+        pendingImportData = []; uploadedHeaders = []; uploadedRows = [];
+        document.getElementById('modal-command').classList.remove('hidden');
+        document.getElementById('modal-command').classList.add('flex');
+      };
+
+      window.processCommandText = function() {
+        const text = document.getElementById('command-input').value.trim();
+        if(!text) return showAlert("ไม่มีข้อมูล", "กรุณากรอกระบุข้อมูลสินค้าแบบรายบรรทัดเพื่อวิเคราะห์ข้อมูล", true);
+
+        const rows = text.split('\n').map(line => line.split(',').map(cell => cell.trim()));
+        if (rows.length < 1) return showAlert("รูปแบบข้อมูลตกหล่น", "โปรดตรวจสอบรูปแบบการใช้เครื่องหมายจุลภาคคั่นระหว่างข้อมูล", true);
+
+        uploadedHeaders = ["ชื่อสินค้า", "ขนาด", "หมวดหมู่", "บาร์โค้ด", "ราคาทุน", "ราคาขาย", "จำนวนสต็อก", "จุดสั่งซื้อขั้นต่ำ"];
+        uploadedRows = rows;
+
+        showMappingSetup();
+      };
+
+      function showMappingSetup() {
+        const grid = document.getElementById('mapping-selectors-grid');
+        grid.innerHTML = fieldsToMap.map(field => {
+          let optionsHtml = `<option value="">-- ไม่ระบุ (ใช้ค่าเริ่มต้น) --</option>`;
+          uploadedHeaders.forEach((header, idx) => {
+            const isMatch = checkHeaderMatch(header, field.key);
+            optionsHtml += `<option value="${idx}" ${isMatch ? 'selected' : ''}>${escapeHTML(header)}</option>`;
+          });
+          return `
+            <div>
+              <label class="font-bold text-indigo-900 block mb-1 text-[10px]">${escapeHTML(field.label)}</label>
+              <select id="map-${escapeHTML(field.key)}" class="w-full bg-white border p-1 rounded font-bold outline-none text-[10px] text-slate-800">${optionsHtml}</select>
+            </div>
+          `;
+        }).join('');
+
+        document.getElementById('import-mapping-sec').classList.remove('hidden');
+      }
+
+      // Parses a raw cell value into a number, distinguishing "left blank" (use default,
+      // not an error) from "typed something that isn't a valid, non-negative number" (error).
+      function parseImportNumber(raw, defaultIfBlank) {
+        if (defaultIfBlank === undefined) defaultIfBlank = 0;
+        if (raw === undefined || raw === null || raw.toString().trim() === '') {
+          return { value: defaultIfBlank, blank: true, invalid: false, negative: false };
+        }
+        // Strip thousand-separator commas and stray whitespace first. Without this,
+        // parseFloat("1,000") silently returns 1 (stops at the comma) instead of 1000
+        // or NaN — a mis-typed price/stock would sail through validation undetected.
+        const cleaned = raw.toString().replace(/,/g, '').trim();
+        const num = parseFloat(cleaned);
+        if (isNaN(num)) return { value: defaultIfBlank, blank: false, invalid: true, negative: false };
+        return { value: num, blank: false, invalid: false, negative: num < 0 };
+      }
+
+      window.applyColumnMappingAndAnalyze = function() {
+        const mapping = {};
+        fieldsToMap.forEach(field => {
+          const el = document.getElementById(`map-${field.key}`);
+          const val = el ? el.value : "";
+          mapping[field.key] = val !== "" ? parseInt(val) : null;
+        });
+
+        if (mapping.name === null) {
+          return showAlert("ยังไม่ได้จับคู่คอลัมน์ชื่อสินค้า", "กรุณาเลือกคอลัมน์ที่ตรงกับ \"ชื่อสินค้าหลัก\" ก่อนวิเคราะห์ข้อมูล มิฉะนั้นทุกแถวจะถูกตีว่าผิดพลาดเพราะไม่มีชื่อ", true);
+        }
+
+        pendingImportData = [];
+        let rowIdCounter = 0;
+
+        uploadedRows.forEach((row) => {
+          if (!row || row.length === 0 || row.join('').trim() === "") return;
+
+          let name = mapping.name !== null ? (row[mapping.name] || '').toString().trim() : '';
+          let productCode = mapping.code !== null ? (row[mapping.code] || '').toString().trim() : '';
+          let sizeName = mapping.size !== null ? (row[mapping.size] || '').toString().trim() : '';
+          let category = mapping.category !== null ? (row[mapping.category] || '').toString().trim() : '';
+          let groupName = mapping.groupName !== null ? (row[mapping.groupName] || '').toString().trim() : '';
+          let rowTypeRaw = mapping.rowType !== null ? (row[mapping.rowType] || '').toString().trim() : '';
+          name = window.repairThaiText(name);
+          productCode = window.repairThaiText(productCode);
+          sizeName = window.repairThaiText(sizeName) || 'ปกติ';
+          category = window.repairThaiText(category);
+          groupName = window.repairThaiText(groupName);
+
+          // ไม่ระบุคอลัมน์ประเภทแถว หรือเว้นว่างไว้ = ถือเป็นแถว "ขนาดหลัก" ตามค่าเริ่มต้น
+          // (ย้อนหลังเข้ากันได้กับไฟล์เก่าที่ไม่มีคอลัมน์นี้)
+          const isFractionRow = /แบ่ง|fraction/i.test(rowTypeRaw);
+
+          const rawBarcode = mapping.barcode !== null ? (row[mapping.barcode] || '').toString().trim() : '';
+          const costP = parseImportNumber(mapping.cost !== null ? row[mapping.cost] : undefined, 0);
+          const priceP = parseImportNumber(mapping.price !== null ? row[mapping.price] : undefined, 0);
+          const stockP = parseImportNumber(mapping.stock !== null ? row[mapping.stock] : undefined, 0);
+          const minP = parseImportNumber(mapping.minStock !== null ? row[mapping.minStock] : undefined, 10);
+
+          let fractionName = mapping.fractionName !== null ? (row[mapping.fractionName] || '').toString().trim() : '';
+          fractionName = window.repairThaiText(fractionName);
+          const fractionMultiplierP = parseImportNumber(mapping.fractionMultiplier !== null ? row[mapping.fractionMultiplier] : undefined, 0);
+          const imageFile = mapping.imageFile !== null ? (row[mapping.imageFile] || '').toString().trim() : '';
+
+          pendingImportData.push({
+            _rowId: 'R' + (rowIdCounter++),
+            id: 'P-' + generateID(),
+            rowType: isFractionRow ? 'FRACTION' : 'MAIN',
+            name, code: productCode, sizeName, category, groupName, barcode: rawBarcode,
+            cost: costP.value, costRaw: costP,
+            price: priceP.value, priceRaw: priceP,
+            stock: stockP.value, stockRaw: stockP,
+            minStock: minP.value, minRaw: minP,
+            fractionName, fractionMultiplier: fractionMultiplierP.value, fractionMultiplierRaw: fractionMultiplierP, imageFile
+          });
+        });
+
+        window.revalidateAndRenderImportPreview();
+      };
+
+      // Re-checks every row for format errors AND duplicates (both within the uploaded file
+      // and against products already in the stock database), then redraws the preview table.
+      // Called after the initial analyze pass, and again after every inline edit / row removal,
+      // so the person always sees up-to-date validation before committing anything.
+      window.revalidateAndRenderImportPreview = function() {
+        const barcodeCounts = {};
+        const nameSizeCounts = {}; // counts MAIN rows only (one variant per name+size)
+        const fractionKeyCounts = {}; // counts FRACTION rows per name+size+fractionName
+        pendingImportData.forEach(item => {
+          const bc = (item.barcode || '').toLowerCase();
+          if (item.rowType !== 'FRACTION' && bc) barcodeCounts[bc] = (barcodeCounts[bc] || 0) + 1;
+          const ns = item.name.toLowerCase() + '|' + item.sizeName.toLowerCase();
+          if (item.name) {
+            if (item.rowType === 'FRACTION') {
+              const fk = ns + '|' + (item.fractionName || '').toLowerCase();
+              fractionKeyCounts[fk] = (fractionKeyCounts[fk] || 0) + 1;
+            } else {
+              nameSizeCounts[ns] = (nameSizeCounts[ns] || 0) + 1;
+            }
+          }
+        });
+
+        // Map every barcode already in the live database to the product/size it belongs to,
+        // so we can tell "this row updates that same item" apart from "this barcode collides
+        // with a totally different product" (which would break barcode scanning if imported).
+        const dbBarcodeMap = {};
+        // Map name+size -> { cost, existsInDb } so FRACTION rows can find their parent variant's
+        // cost, whether that variant is already in the database or is a MAIN row earlier in
+        // this same file (both cases must work for a re-imported export to round-trip cleanly).
+        const dbVariantByNameSize = {};
+        Object.values(db.products).forEach(p => {
+          if (p.isDeleted) return;
+          p.variants.forEach(v => {
+            if (v.barcode) dbBarcodeMap[v.barcode.toString().toLowerCase()] = { productName: p.name, sizeName: v.sizeName };
+            dbVariantByNameSize[p.name.toLowerCase() + '|' + v.sizeName.toLowerCase()] = { cost: v.cost };
+          });
+        });
+        pendingImportData.forEach(item => {
+          if (item.rowType !== 'FRACTION' && item.name) {
+            const ns = item.name.toLowerCase() + '|' + item.sizeName.toLowerCase();
+            dbVariantByNameSize[ns] = { cost: item.cost }; // MAIN rows in-file take priority over DB
+          }
+        });
+
+        // Names of products currently suspended (ระงับการขาย) — importing a row with a
+        // matching name will revive that product rather than create a duplicate, so flag
+        // it as a warning up front instead of surprising the person after confirming.
+        const deletedProductNames = new Set(
+          Object.values(db.products).filter(p => p.isDeleted).map(p => p.name.toLowerCase())
+        );
+
+        const existingCategoryNames = new Set(db.categories.map(c => c.name.toLowerCase()));
+
+        pendingImportData.forEach(item => {
+          const errors = [];
+          const warnings = [];
+
+          if (!item.name) errors.push('ชื่อสินค้าว่าง');
+
+          if (item.rowType === 'FRACTION') {
+            // แถวแบ่งขาย: อ้างอิงขนาดหลักด้วยชื่อสินค้า+ขนาด ไม่มีทุน/สต็อกของตัวเอง
+            // (ใช้ทุนของขนาดหลักคูณอัตราส่วนแทน เหมือนตอนขายจริง)
+            if (!item.fractionName) errors.push('ยังไม่ได้ระบุชื่อหน่วยแบ่งขาย');
+
+            if (item.fractionMultiplierRaw.invalid) errors.push('อัตราส่วนแบ่งขายไม่ใช่ตัวเลข');
+            else if (item.fractionMultiplierRaw.blank || item.fractionMultiplier <= 0) errors.push('อัตราส่วนแบ่งขายต้องมากกว่า 0');
+
+            if (item.priceRaw.invalid) errors.push('ราคาแบ่งขายไม่ใช่ตัวเลข');
+            else if (item.priceRaw.negative) errors.push('ราคาแบ่งขายติดลบ');
+
+            const ns = item.name.toLowerCase() + '|' + item.sizeName.toLowerCase();
+            const parent = dbVariantByNameSize[ns];
+            if (!parent) {
+              errors.push(`ไม่พบขนาดหลัก "${item.sizeName}" ของสินค้านี้ (ต้องมีแถว "ขนาดหลัก" ชื่อ+ขนาดเดียวกันอยู่ในไฟล์ หรือมีอยู่แล้วในระบบ)`);
+            } else if (!item.fractionMultiplierRaw.invalid && item.fractionMultiplier > 0 && !item.priceRaw.invalid && !item.priceRaw.negative) {
+              const impliedCost = roundAmt(parent.cost * item.fractionMultiplier);
+              if (item.price > 0 && impliedCost > 0 && item.price < impliedCost) {
+                warnings.push(`ราคาแบ่งขายต่ำกว่าทุนต่อหน่วย (ทุนโดยประมาณ ${formatMoney(impliedCost)}) — ขาดทุน`);
+              }
+            }
+
+            if (item.name && item.fractionName) {
+              const fk = ns + '|' + item.fractionName.toLowerCase();
+              if (fractionKeyCounts[fk] > 1) errors.push('ชื่อหน่วยแบ่งขายซ้ำกันเองในไฟล์นี้ (ขนาดเดียวกัน)');
+            }
+          } else {
+            if (item.costRaw.invalid) errors.push('ทุนไม่ใช่ตัวเลข');
+            else if (item.costRaw.negative) errors.push('ทุนติดลบ');
+
+            if (item.priceRaw.invalid) errors.push('ราคาขายไม่ใช่ตัวเลข');
+            else if (item.priceRaw.negative) errors.push('ราคาขายติดลบ');
+
+            if (item.stockRaw.invalid) errors.push('สต็อกไม่ใช่ตัวเลข');
+            else if (item.stockRaw.negative) errors.push('สต็อกติดลบ');
+
+            if (item.minRaw.invalid) errors.push('สต็อกขั้นต่ำไม่ใช่ตัวเลข');
+            else if (item.minRaw.negative) errors.push('สต็อกขั้นต่ำติดลบ');
+
+            const bc = (item.barcode || '').toLowerCase();
+            if (bc && barcodeCounts[bc] > 1) errors.push('บาร์โค้ดซ้ำกันเองในไฟล์นี้');
+
+            if (bc && dbBarcodeMap[bc]) {
+              const owner = dbBarcodeMap[bc];
+              const isSameItem = owner.productName.toLowerCase() === item.name.toLowerCase() && owner.sizeName === item.sizeName;
+              if (!isSameItem) {
+                errors.push(`บาร์โค้ดนี้ถูกใช้กับ "${owner.productName} (${owner.sizeName})" อยู่แล้ว`);
+              }
+            }
+
+            if (item.name) {
+              const ns = item.name.toLowerCase() + '|' + item.sizeName.toLowerCase();
+              if (nameSizeCounts[ns] > 1) errors.push('ชื่อ+ขนาดซ้ำกันเองในไฟล์นี้');
+              if (deletedProductNames.has(item.name.toLowerCase())) {
+                warnings.push('สินค้านี้เคยถูกระงับการขายไว้ — นำเข้าจะกู้คืนสถานะให้ขายได้อีกครั้ง');
+              }
+            }
+
+            if (!item.priceRaw.invalid && !item.costRaw.invalid && item.price > 0 && item.cost > 0 && item.price < item.cost) {
+              warnings.push('ราคาขายต่ำกว่าทุน (ขาดทุน)');
+            }
+
+            if (item.category && !existingCategoryNames.has(item.category.toLowerCase())) {
+              warnings.push(`หมวดหมู่ "${item.category}" ยังไม่มีในระบบ — จะสร้างหมวดหมู่ใหม่ให้อัตโนมัติ`);
             }
           }
 
-          if (Date.now() - pf.lastDialogAt < 60 * 1000) return false;
-          pf.lastDialogAt = Date.now();
-          if (typeof window.showAlert === 'function') {
-            window.showAlert(
-              "⚠️ พบข้อมูลขัดแย้ง",
-              "ระบบรวมข้อมูลอัตโนมัติไม่สำเร็จ จึงหยุดการส่งข้อมูลเพื่อป้องกันการเขียนทับข้อมูลของอีกเครื่อง กรุณาตรวจสอบการเชื่อมต่อแล้วลองทำรายการใหม่",
-              true
-            );
+          item.errors = errors;
+          item.warnings = warnings;
+          item.isValid = errors.length === 0;
+        });
+
+        renderImportPreviewTable();
+      };
+
+      function renderImportPreviewTable() {
+        const rows = pendingImportData;
+        const successCount = rows.filter(r => r.isValid && r.warnings.length === 0).length;
+        const warnCount = rows.filter(r => r.isValid && r.warnings.length > 0).length;
+        const errorCount = rows.filter(r => !r.isValid).length;
+
+        const editableCell = (rowId, field, value, type) => {
+          const display = (value === undefined || value === null || value === '') ? '' : value.toString();
+          return `<span class="inline-edit-cell" onclick="window.editImportCell('${rowId}','${field}',this,'${type || 'text'}')">${escapeHTML(display)}</span>`;
+        };
+        const naCell = () => `<span class="text-slate-300">—</span>`;
+
+        let html = `
+          <table class="w-full text-left border text-[10px] whitespace-nowrap text-slate-700">
+            <thead class="bg-slate-100 sticky top-0 z-10">
+              <tr>
+                <th class="p-2 border min-w-[160px] whitespace-normal">สถานะ (คลิกค่าในตารางเพื่อแก้ไข)</th>
+                <th class="p-2 border">ประเภท</th>
+                <th class="p-2 border">สินค้าหลัก</th>
+                <th class="p-2 border">ขนาด</th>
+                <th class="p-2 border">หมวดหมู่</th>
+                <th class="p-2 border font-mono">บาร์โค้ด</th>
+                <th class="p-2 border">ทุน</th>
+                <th class="p-2 border">ราคาขาย / ราคาแบ่งขาย</th>
+                <th class="p-2 border">สต็อก</th>
+                <th class="p-2 border text-rose-500">ขั้นต่ำ</th>
+                <th class="p-2 border">ชื่อหน่วยแบ่งขาย</th>
+                <th class="p-2 border">อัตราส่วน</th>
+                <th class="p-2 border"></th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        rows.forEach(item => {
+          const isFraction = item.rowType === 'FRACTION';
+          const rowClass = !item.isValid ? 'bg-rose-50' : (item.warnings.length ? 'bg-amber-50' : (isFraction ? 'bg-emerald-50/40' : 'bg-white'));
+          let statusLabel;
+          if (!item.isValid) statusLabel = `❌ ${escapeHTML(item.errors.join(' / '))}`;
+          else if (item.warnings.length) statusLabel = `⚠️ ${escapeHTML(item.warnings.join(' / '))}`;
+          else statusLabel = '✅ พร้อมนำเข้า';
+
+          const barcodeCell = item.barcode
+            ? editableCell(item._rowId, 'barcode', item.barcode, 'text')
+            : `<span class="inline-edit-cell text-slate-400 italic" onclick="window.editImportCell('${item._rowId}','barcode',this,'text')">(สร้างอัตโนมัติ)</span>`;
+
+          html += `
+            <tr class="${rowClass}">
+              <td class="p-2 border font-bold max-w-[220px] whitespace-normal">${statusLabel}</td>
+              <td class="p-2 border text-center">${isFraction ? '✂️ แบ่งขาย' : '📦 ขนาดหลัก'}</td>
+              <td class="p-2 border">${editableCell(item._rowId, 'name', item.name, 'text')}</td>
+              <td class="p-2 border">${editableCell(item._rowId, 'sizeName', item.sizeName, 'text')}</td>
+              <td class="p-2 border">${isFraction ? naCell() : (item.category ? editableCell(item._rowId, 'category', item.category, 'text') : `<span class="inline-edit-cell text-slate-400 italic" onclick="window.editImportCell('${item._rowId}','category',this,'text')">(งานทั่วไป)</span>`)}</td>
+              <td class="p-2 border font-mono">${isFraction ? naCell() : barcodeCell}</td>
+              <td class="p-2 border">${isFraction ? naCell() : editableCell(item._rowId, 'cost', item.cost, 'number')}</td>
+              <td class="p-2 border text-indigo-600 font-bold">${editableCell(item._rowId, 'price', item.price, 'number')}</td>
+              <td class="p-2 border text-emerald-600 font-bold">${isFraction ? naCell() : editableCell(item._rowId, 'stock', item.stock, 'number')}</td>
+              <td class="p-2 border text-rose-600 font-bold">${isFraction ? naCell() : editableCell(item._rowId, 'minStock', item.minStock, 'number')}</td>
+              <td class="p-2 border">${isFraction ? editableCell(item._rowId, 'fractionName', item.fractionName, 'text') : naCell()}</td>
+              <td class="p-2 border">${isFraction ? editableCell(item._rowId, 'fractionMultiplier', item.fractionMultiplier, 'number') : naCell()}</td>
+              <td class="p-2 border text-center"><button onclick="window.removeImportRow('${item._rowId}')" title="ลบแถวนี้ออกจากการนำเข้า" class="text-rose-500 font-black">✕</button></td>
+            </tr>
+          `;
+        });
+
+        html += `</tbody></table>`;
+        document.getElementById('import-preview-area').innerHTML = html;
+
+        document.getElementById('import-stats').innerHTML =
+          `ทั้งหมด <b>${rows.length}</b> แถว &nbsp;|&nbsp; ✅ พร้อมนำเข้า <b class="text-emerald-600">${successCount}</b> &nbsp;|&nbsp; ⚠️ มีคำเตือน <b class="text-amber-500">${warnCount}</b> &nbsp;|&nbsp; ❌ ผิดพลาด (จะไม่ถูกนำเข้า) <b class="text-rose-500">${errorCount}</b>`;
+        document.getElementById('preview-actions-bar').classList.remove('hidden');
+        document.getElementById('import-hint').classList.remove('hidden');
+        document.getElementById('btn-confirm-import').classList.toggle('hidden', rows.filter(r => r.isValid).length === 0);
+      }
+
+      // Turns one preview cell into an inline text/number input, exactly like the stock
+      // spreadsheet editor, so mistakes caught by validation can be fixed on the spot without
+      // re-uploading the file. Saving re-runs full validation (duplicates can depend on other rows).
+      window.editImportCell = function(rowId, field, element, inputType) {
+        if (element.querySelector('input')) return;
+        const item = pendingImportData.find(r => r._rowId === rowId);
+        if (!item) return;
+
+        const currentValue = item[field];
+        const input = document.createElement('input');
+        input.type = inputType === 'number' ? 'number' : 'text';
+        if (inputType === 'number') input.step = 'any';
+        input.className = 'inline-input';
+        input.value = (field === 'barcode' && !currentValue) ? '' : currentValue;
+
+        element.innerHTML = '';
+        element.appendChild(input);
+        input.focus(); input.select();
+
+        const save = () => {
+          const raw = input.value;
+          if (inputType === 'number') {
+            const parsed = parseImportNumber(raw, field === 'minStock' ? 10 : 0);
+            item[field] = parsed.value;
+            item[field + 'Raw'] = parsed;
+          } else if (field === 'sizeName') {
+            item.sizeName = window.repairThaiText(raw.trim()) || 'ปกติ';
+          } else if (field === 'name') {
+            item.name = window.repairThaiText(raw.trim());
+          } else if (field === 'category') {
+            item.category = window.repairThaiText(raw.trim());
+          } else if (field === 'fractionName') {
+            item.fractionName = window.repairThaiText(raw.trim());
+          } else {
+            item[field] = raw.trim();
           }
+          window.revalidateAndRenderImportPreview();
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+      };
+
+      window.removeImportRow = function(rowId) {
+        pendingImportData = pendingImportData.filter(r => r._rowId !== rowId);
+        window.revalidateAndRenderImportPreview();
+      };
+
+      window.confirmImportData = function() {
+        if (!guardOnce('confirmImportData')) return;
+        const validCount = pendingImportData.filter(i => i.isValid).length;
+        if (validCount === 0) return showAlert("ไม่มีรายการที่นำเข้าได้", "ทุกแถวยังมีข้อผิดพลาดอยู่ กรุณาแก้ไขหรือลบแถวที่ผิดพลาดออกก่อน", true);
+
+        window.openManagerPinModal(() => {
+          window.showCustomConfirm(
+            "ยืนยันการนำเข้าข้อมูล?",
+            `ระบบจะเพิ่ม/อัปเดตสินค้า ${validCount} รายการลงคลังจริงทันที (แถวที่ยังผิดพลาดจะถูกข้ามไปโดยอัตโนมัติ)`,
+            () => {
+              const validItems = pendingImportData.filter(i => i.isValid);
+              const mainItems = validItems.filter(i => i.rowType !== 'FRACTION');
+              const fractionItems = validItems.filter(i => i.rowType === 'FRACTION');
+              let importedFractionCount = 0;
+
+              // PASS 1: สร้าง/อัปเดตสินค้าและขนาดหลักก่อน (เหมือนเดิมทุกประการ)
+              mainItems.forEach(item => {
+                let barcode = item.barcode;
+                if (!barcode) {
+                  barcode = 'AUTO-' + (db.counters.barcode++);
+                } else {
+                  const barcodeNumber = parseInt(barcode);
+                  if (!isNaN(barcodeNumber) && barcodeNumber >= db.counters.barcode) {
+                    db.counters.barcode = barcodeNumber + 1;
+                  }
+                }
+
+                // Resolve the row's category tag(s) to existing categories (case-insensitive
+                // match), or create new ones on the fly — hardware-store catalogs from a
+                // supplier commonly introduce categories the store hasn't set up yet.
+                // Supports multiple tags in one cell separated by commas, matching how
+                // window.exportExcel() writes multi-category products back out (so a
+                // round-trip export → re-import doesn't collapse tags into one garbage
+                // category literally named "TagA, TagB").
+                let resolvedCategoryNames = [];
+                if (item.category) {
+                  const catCfg = db.codeConfig.category;
+                  resolvedCategoryNames = item.category.split(',').map(c => c.trim()).filter(Boolean).map(rawCat => {
+                    const existingCat = db.categories.find(c => c.name.toLowerCase() === rawCat.toLowerCase());
+                    if (existingCat) return existingCat.name;
+                    const newCat = { id: catCfg.prefix + String(db.counters.category++).padStart(catCfg.digits, '0'), name: rawCat, icon: '📦', color: '#6366f1', parentId: null };
+                    db.categories.push(newCat);
+                    return newCat.name;
+                  });
+                }
+                if (resolvedCategoryNames.length === 0) resolvedCategoryNames = ['งานทั่วไป'];
+                const categoryName = resolvedCategoryNames[0]; // ใช้ตัวแรกไว้เทียบตอนอัปเดตสินค้าเดิม (ดูด้านล่าง)
+
+                // Match by name across ALL products, including ones currently suspended
+                // (isDeleted) — otherwise re-importing a discontinued item's stock file
+                // would create a second, separate product record with the same name
+                // instead of reviving the original one.
+                let existingProduct = Object.values(db.products).find(p => p.name.toLowerCase() === item.name.toLowerCase());
+
+                if (existingProduct) {
+                  if (existingProduct.isDeleted) existingProduct.isDeleted = false;
+                  if (!Array.isArray(existingProduct.cat)) existingProduct.cat = [];
+                  resolvedCategoryNames.forEach(catName => {
+                    if (!existingProduct.cat.some(c => c.toLowerCase() === catName.toLowerCase())) {
+                      existingProduct.cat.push(catName);
+                    }
+                  });
+                  // อัปเดตกลุ่มสินค้าเฉพาะเมื่อไฟล์ระบุค่ามาจริงๆ (ไม่เขียนทับด้วยค่าว่างถ้าช่องนี้ไม่ได้กรอก
+                  // ในไฟล์ที่นำเข้า เพื่อไม่ให้การนำเข้าซ้ำไปลบการจัดกลุ่มที่ตั้งไว้ในระบบโดยไม่ตั้งใจ)
+                  if (item.groupName) existingProduct.groupName = item.groupName;
+                  if (item.code) existingProduct.code = item.code;
+                  const existingV = existingProduct.variants.find(v => v.sizeName === item.sizeName || (barcode && v.barcode === barcode));
+                  if (existingV) {
+                    existingV.cost = item.cost;
+                    existingV.price = item.price;
+                    existingV.stock = roundStock(item.stock);
+                    existingV.minStock = item.minStock;
+                    if (barcode) existingV.barcode = barcode;
+                    if (!Array.isArray(existingV.fractions)) existingV.fractions = [];
+                  } else {
+                    existingProduct.variants.push({
+                      id: 'V-' + generateID(), sizeName: item.sizeName, barcode: barcode,
+                      cost: item.cost, price: item.price, stock: roundStock(item.stock), minStock: item.minStock, fractions: []
+                    });
+                  }
+                } else {
+                  db.products[item.id] = {
+                    id: item.id, name: item.name, code: item.code || '', cat: resolvedCategoryNames, groupName: item.groupName || '', image: "📦", isDeleted: false, variants: [
+                      { id: 'V-' + generateID(), sizeName: item.sizeName, barcode: barcode, cost: item.cost, price: item.price, stock: roundStock(item.stock), minStock: item.minStock, fractions: [] }
+                    ]
+                  };
+                }
+              });
+
+              // PASS 2: แนบตัวเลือกแบ่งขายเข้ากับขนาดหลักที่ตรงกัน (ชื่อสินค้า + ขนาด) —
+              // รันหลัง PASS 1 เสมอ เพื่อให้ขนาดหลักที่เพิ่งสร้าง/อัปเดตในไฟล์เดียวกันมีอยู่แล้ว
+              fractionItems.forEach(item => {
+                const product = Object.values(db.products).find(p => p.name.toLowerCase() === item.name.toLowerCase());
+                const variant = product ? product.variants.find(v => v.sizeName === item.sizeName) : null;
+                if (!product || !variant) return; // ป้องกันพลาด แม้ revalidate ควรกรองออกไปแล้วก็ตาม
+                if (!Array.isArray(variant.fractions)) variant.fractions = [];
+
+                const existingFraction = variant.fractions.find(f => f.fractionName.toLowerCase() === item.fractionName.toLowerCase());
+                if (existingFraction) {
+                  existingFraction.fractionMultiplier = item.fractionMultiplier;
+                  existingFraction.fractionPrice = item.price;
+                } else {
+                  variant.fractions.push({
+                    id: 'F-' + generateID(),
+                    fractionName: item.fractionName,
+                    fractionMultiplier: item.fractionMultiplier,
+                    fractionPrice: item.price
+                  });
+                }
+                importedFractionCount++;
+              });
+
+
+              persist(); renderSaleHome(); window.renderStock(); closeModal('modal-command');
+              logTransaction('PRODUCT_IMPORT', { importedCount: validCount, mainCount: mainItems.length, fractionCount: importedFractionCount, skippedCount: pendingImportData.length - validCount });
+              showToast(`นำเข้าข้อมูลสินค้าสำเร็จ ${mainItems.length} ขนาด${importedFractionCount > 0 ? ` + ${importedFractionCount} ตัวเลือกแบ่งขาย` : ''}`);
+              if (typeof window.__afterProductImport === 'function') {
+                const afterImport = window.__afterProductImport;
+                window.__afterProductImport = null;
+                Promise.resolve(afterImport(validItems)).catch(err => {
+                  console.error('Post-import image attachment failed', err);
+                  showAlert('นำเข้ารูปภาพไม่สมบูรณ์', err.message || String(err), true);
+                });
+              }
+            }
+          );
+        });
+      };
+
+      window.selectOnlyValidImports = function() {
+        pendingImportData = pendingImportData.filter(item => item.isValid);
+        showToast("คัดเอาแถวที่ผิดพลาดออกเรียบร้อย");
+        window.revalidateAndRenderImportPreview();
+      };
+
+      // ==========================================
+      // ==========================================
+      // USER MANAGEMENT (individual login credentials per person, on top of
+      // the shared store PIN — for attributing who did what, and for a family
+      // business wanting each member to have their own PIN instead of one
+      // shared code)
+      // ==========================================
+      function renderUserManagerList() {
+        const container = document.getElementById('user-manager-list');
+        if (!db.users || db.users.length === 0) {
+          container.innerHTML = '<p class="text-center text-slate-400 p-6 text-xs">ยังไม่มีผู้ใช้งานเพิ่มเติม</p>';
+          return;
+        }
+        container.innerHTML = db.users.map(u => `
+          <div class="bg-white p-3 rounded-xl border flex justify-between items-center text-xs text-slate-800">
+            <div>
+              <b>${escapeHTML(u.name)}</b> ${u.role === 'owner' ? '<span class="text-[9px] text-indigo-500 font-bold">(เจ้าของร้าน)</span>' : ''}
+              <p class="text-[10px] text-slate-500 font-mono">🔑 User ID: <b>${escapeHTML(u.id)}</b></p>
+              <p class="text-[10px] text-slate-400">${u.pinHash ? '✅ มี PIN อนุมัติผู้จัดการ' : '— ไม่มี PIN อนุมัติผู้จัดการ'} · เพิ่มเมื่อ ${new Date(u.createdAt).toLocaleDateString('th-TH')}</p>
+            </div>
+            <div class="flex gap-2 flex-shrink-0">
+              ${u.role !== 'owner' ? `<button onclick="window.openUserForm('${escapeHTML(u.id)}')" class="px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg font-bold text-[10px] btn-touch">แก้ไข</button>
+              <button onclick="window.deleteUser('${escapeHTML(u.id)}')" class="px-2 py-1 bg-rose-50 text-rose-600 rounded-lg font-bold text-[10px] btn-touch">ลบ</button>` : ''}
+            </div>
+          </div>`).join('');
+      }
+
+      window.openUserManagerModal = function() {
+        window.openManagerPinModal(() => {
+          renderUserManagerList();
+          window.openUserForm(null);
+          document.getElementById('modal-user-manager').classList.remove('hidden');
+          document.getElementById('modal-user-manager').classList.add('flex');
+        });
+      };
+
+      window.openUserForm = function(id) {
+        document.getElementById('edit-user-id').value = id || '';
+        document.getElementById('user-pin').value = '';
+        const loginIdEl = document.getElementById('user-login-id');
+        const loginPwEl = document.getElementById('user-login-password');
+        if (id && db.users) {
+          const u = db.users.find(x => x.id === id);
+          if (u) {
+            document.getElementById('user-form-title').innerText = 'แก้ไขผู้ใช้งาน';
+            document.getElementById('user-name').value = u.name;
+            document.getElementById('user-pin').placeholder = 'เว้นว่างไว้ถ้าไม่เปลี่ยน PIN';
+            // User ID เปลี่ยนไม่ได้หลังสร้างแล้ว (เป็น primary key ผูกกับ record อื่นๆ ที่มีอยู่)
+            if (loginIdEl) { loginIdEl.value = u.id; loginIdEl.disabled = true; }
+            if (loginPwEl) { loginPwEl.value = ''; loginPwEl.placeholder = 'เว้นว่างไว้ถ้าไม่เปลี่ยนรหัสผ่าน'; }
+            return;
+          }
+        }
+        document.getElementById('user-form-title').innerText = 'เพิ่มผู้ใช้งานใหม่';
+        document.getElementById('user-name').value = '';
+        document.getElementById('user-pin').placeholder = 'PIN 4 หลัก (เว้นว่างได้ถ้าไม่ต้องการ)';
+        if (loginIdEl) { loginIdEl.value = ''; loginIdEl.disabled = false; loginIdEl.placeholder = 'User ID (a-z, 0-9, 4-32 ตัวอักษร) เช่น staff01'; }
+        if (loginPwEl) { loginPwEl.value = ''; loginPwEl.placeholder = 'รหัสผ่านเข้าระบบ (อย่างน้อย 4 ตัวอักษร)'; }
+      };
+
+      window.saveUser = async function() {
+        if (!guardOnce('saveUser')) return;
+        const id = document.getElementById('edit-user-id').value;
+        const name = document.getElementById('user-name').value.trim();
+        const pin = document.getElementById('user-pin').value.trim();
+        const loginId = (document.getElementById('user-login-id')?.value || '').trim().toLowerCase();
+        const loginPassword = document.getElementById('user-login-password')?.value || '';
+        const loginEmail = (document.getElementById('user-login-email')?.value || '').trim().toLowerCase();
+
+        if (!name) return showAlert('ข้อมูลไม่ครบ', 'กรุณาระบุชื่อผู้ใช้งาน', true);
+        if (pin && !/^\d{4}$/.test(pin)) return showAlert('PIN ไม่ถูกต้อง', 'PIN อนุมัติผู้จัดการต้องเป็นตัวเลข 4 หลักเท่านั้น (เว้นว่างไว้ได้ถ้าไม่ต้องการ)', true);
+
+        if (!db.users) db.users = [];
+        const isNew = !id;
+
+        if (isNew) {
+          // จำเป็นต้องมี User ID + รหัสผ่านเข้าระบบ สำหรับผู้ใช้งานใหม่เสมอ ไม่งั้นคนนี้จะล็อกอิน
+          // เข้าแอปเองไม่ได้เลย (เคยเป็นบั๊ก: หน้านี้เคยสร้างได้แค่ PIN อนุมัติอย่างเดียว ไม่มีทาง
+          // ล็อกอินได้จริง)
+          if (!loginId || !/^[a-z0-9._-]{4,32}$/.test(loginId)) {
+            return showAlert('User ID ไม่ถูกต้อง', 'กรุณาระบุ User ID เป็นตัวอักษร a-z, 0-9, จุด, ขีดกลาง หรือ _ ความยาว 4-32 ตัวอักษร', true);
+          }
+          if ((db.users || []).some(u => u.id === loginId)) {
+            return showAlert('User ID ซ้ำ', 'มีผู้ใช้งาน User ID นี้อยู่แล้ว กรุณาเลือก ID อื่น', true);
+          }
+          if (!loginPassword || loginPassword.length < 8) {
+            return showAlert('รหัสผ่านไม่ถูกต้อง', 'กรุณาระบุรหัสผ่านเข้าระบบอย่างน้อย 8 ตัวอักษร', true);
+          }
+
+          const passwordSalt = generatePinSalt();
+          const passwordHash = await hashPassword(loginPassword, passwordSalt);
+
+          const newUser = {
+            id: loginId, name, role: 'staff', email: loginEmail || '',
+            passwordHash, passwordSalt,
+            createdAt: new Date().toISOString()
+          };
+          // PIN อนุมัติผู้จัดการเป็นออปชันเสริม แยกจากรหัสผ่านล็อกอินโดยสิ้นเชิง
+          if (pin) {
+            const pinSalt = generatePinSalt();
+            newUser.pinHash = await hashPIN(pin, pinSalt);
+            newUser.pinSalt = pinSalt;
+          }
+          db.users.push(newUser);
+        } else {
+          const u = db.users.find(x => x.id === id);
+          if (!u) return;
+          u.name = name;
+          if (loginEmail) u.email = loginEmail;
+          if (loginPassword) {
+            if (loginPassword.length < 8) return showAlert('รหัสผ่านไม่ถูกต้อง', 'รหัสผ่านเข้าระบบต้องมีอย่างน้อย 4 ตัวอักษร', true);
+            const passwordSalt = generatePinSalt();
+            u.passwordHash = await hashPassword(loginPassword, passwordSalt);
+            u.passwordSalt = passwordSalt;
+          }
+          if (pin) {
+            u.pinSalt = generatePinSalt();
+            u.pinHash = await hashPIN(pin, u.pinSalt);
+          }
+        }
+
+        persist();
+        if (isNew && loginEmail && typeof window.provisionStoreMemberAuth === 'function') {
+          try {
+            const cloudMember = await window.provisionStoreMemberAuth(loginEmail, loginPassword, newUser.role);
+            if (cloudMember?.userId) { newUser.supabaseAuthUserId = cloudMember.userId; persist(); }
+          } catch (e) {
+            // Do not lose the local member record; clearly mark cloud provisioning failure.
+            showToast('⚠️ สร้างสมาชิกในเครื่องแล้ว แต่เชื่อมบัญชี Cloud ไม่สำเร็จ: ' + (e.message || e));
+          }
+        }
+        logTransaction(isNew ? 'USER_CREATE' : 'USER_EDIT', { name, email: loginEmail || null });
+        renderUserManagerList();
+        window.openUserForm(null);
+        showToast('บันทึกข้อมูลผู้ใช้งานสำเร็จ');
+      };
+
+      window.deleteUser = function(id) {
+        if (!guardOnce('deleteUser')) return;
+        const u = db.users.find(x => x.id === id);
+        if (!u) return;
+        window.showCustomConfirm(
+          `ลบผู้ใช้งาน "${u.name}"?`,
+          'ประวัติการทำรายการเดิมของผู้ใช้งานนี้จะยังคงอยู่ในระบบ (แสดงชื่อเดิมไว้) แต่จะเข้าสู่ระบบด้วย PIN นี้ไม่ได้อีกต่อไป',
+          () => {
+            db.users = db.users.filter(x => x.id !== id);
+            persist();
+            logTransaction('USER_DELETE', { userId: id, name: u.name });
+            renderUserManagerList();
+            showToast('ลบผู้ใช้งานสำเร็จ');
+          }
+        );
+      };
+
+      // ==========================================
+      // SETTINGS & PIN MANAGEMENT
+      // ==========================================
+      window.openSettingsModal = function() {
+        document.getElementById('setting-store-name').value = db.storeName;
+        document.getElementById('setting-store-address').value = db.storeAddress;
+        document.getElementById('setting-promptpay-id').value = db.promptPayId;
+        document.getElementById('setting-tax-name').value = db.settings.taxPayerName || "";
+        document.getElementById('setting-tax-id').value = db.settings.taxPayerId || "";
+                document.getElementById('setting-mgr-session-minutes').value = String(db.settings.mgrSessionMinutes || 0);
+        
+
+        document.getElementById('modal-settings').classList.remove('hidden');
+        document.getElementById('modal-settings').classList.add('flex');
+      };
+
+      window.saveSettings = function() {
+        if (!guardOnce('saveSettings')) return;
+        db.storeName = document.getElementById('setting-store-name').value;
+        db.storeAddress = document.getElementById('setting-store-address').value;
+        db.promptPayId = document.getElementById('setting-promptpay-id').value;
+        db.settings.taxPayerName = document.getElementById('setting-tax-name').value;
+        db.settings.taxPayerId = document.getElementById('setting-tax-id').value;
+              db.settings.mgrSessionMinutes = parseInt(document.getElementById('setting-mgr-session-minutes').value) || 0;
+        if (db.settings.mgrSessionMinutes === 0) window.lockManagerSessionNow();
+
+        persist(); closeModal('modal-settings'); showToast("บันทึกการตั้งค่าสำเร็จ");
+        if(activeView === 'stock') window.renderStock();
+        renderAll();
+      };
+
+      window.changePinFromSettings = async function() {
+        const cur = document.getElementById('setting-pin-current').value;
+        const n1 = document.getElementById('setting-pin-new').value;
+        const n2 = document.getElementById('setting-pin-confirm').value;
+        
+        const curHash = await hashPIN(cur, db.pinSalt);
+        if(db.pinHash && curHash !== db.pinHash) { const legacy = typeof hashPINLegacy === 'function' ? await hashPINLegacy(current, db.pinSalt) : ''; if (legacy !== db.pinHash) return showAlert("ผิดพลาด", "รหัส PIN ปัจจุบันไม่ถูกต้อง", true); }
+        // Require exactly 4 digits (0-9 only) — the lock screen keypad can only ever type
+        // digits, so a PIN containing letters/symbols would permanently lock everyone out.
+        if(!/^\d{4}$/.test(n1)) return showAlert("ผิดพลาด", "PIN ใหม่ต้องเป็นตัวเลข 4 หลักเท่านั้น (0-9)", true);
+        if(n1 !== n2) return showAlert("ผิดพลาด", "ยืนยันรหัส PIN ไม่ตรงกัน", true);
+        
+        // Always issue a fresh random salt when the PIN changes, so the stored hash can never
+        // be matched against a precomputed table shared across stores/devices.
+        db.pinSalt = generatePinSalt();
+        db.pinHash = await hashPIN(n1, db.pinSalt);
+        db.security.lockFailCount = 0; db.security.lockUntil = 0;
+        db.security.mgrFailCount = 0; db.security.mgrLockUntil = 0;
+        persist();
+        document.getElementById('setting-pin-current').value = "";
+        document.getElementById('setting-pin-new').value = "";
+        document.getElementById('setting-pin-confirm').value = "";
+        showToast("เปลี่ยนรหัส PIN ผู้จัดการสำเร็จ");
+      };
+
+      // ==========================================
+      // BACKUP / EXPORT / RESTORE SYSTEM
+      // ==========================================
+      window.exportExcel = function() {
+        // หัวคอลัมน์นี้ตรงกับ fieldsToMap/checkHeaderMatch ของระบบนำเข้าทุกคำ — อัปโหลดไฟล์นี้
+        // กลับเข้าไปที่ "นำเข้าสินค้าด่วน" แล้วทุกคอลัมน์จะจับคู่ให้อัตโนมัติ (multi-size และ
+        // สินค้าแบ่งขายจะกลับเข้าไปครบถ้วนตามเดิม ไม่ใช่แค่ขนาดหลัก)
+        const rows = [[
+          "ชื่อสินค้า", "รหัสสินค้า", "ประเภทแถว", "ขนาด", "หมวดหมู่", "กลุ่มสินค้า", "บาร์โค้ด",
+          "ทุน", "ราคาขาย", "สต็อก", "สต็อกขั้นต่ำ",
+          "ชื่อหน่วยแบ่งขาย", "อัตราส่วนแบ่งขาย"
+        ]];
+        Object.values(db.products).forEach(p => {
+          if (p.isDeleted) return;
+          const categoryText = Array.isArray(p.cat) ? p.cat.join(', ') : (p.cat || '');
+          p.variants.forEach(v => {
+            rows.push([
+              p.name, p.code || '', "ขนาดหลัก", v.sizeName, categoryText, p.groupName || '', v.barcode,
+              v.cost, v.price, v.stock, v.minStock || 10,
+              "", ""
+            ]);
+            (v.fractions || []).forEach(f => {
+              rows.push([
+                p.name, "", "แบ่งขาย", v.sizeName, "", "", "",
+                "", f.fractionPrice, "", "",
+                f.fractionName, f.fractionMultiplier
+              ]);
+            });
+          });
+        });
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, "Stock");
+        XLSX.writeFile(wb, "SmartPOS_Stock.xlsx");
+      };
+
+      // Shared download helper used by manual export, auto-backup, and pre-import backup.
+      function downloadJSONFile(dataObj, filenamePrefix) {
+        try {
+          const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataObj));
+          const a = document.createElement('a');
+          a.setAttribute("href", dataStr);
+          a.setAttribute("download", `${filenamePrefix}_${new Date().toISOString().slice(0, 10)}_${Date.now()}.json`);
+          a.click();
+          return true;
+        } catch (e) {
+          console.error("Backup download failed:", e);
           return false;
         }
       }
-    }
 
-    const { data: authData } = await client.auth.getUser();
-    const authUserId = authData?.user?.id || null;
-    if (!authUserId) throw new Error('ยังไม่มี Supabase Auth session จึงไม่อนุญาตให้ซิงค์ข้อมูล');
-
-    const stateForRemote = JSON.parse(JSON.stringify(db));
-    Object.values(stateForRemote.products || {}).forEach(p => {
-      if (p.imageStoragePath) p.imageUrl = '';
-    });
-    (stateForRemote.documents || []).forEach(d => {
-      if (d.fileStoragePath) d.fileUrl = '';
-    });
-
-    const { error: upsertErr } = await client
-      .from('pos_state')
-      .upsert({ id: POS_STATE_ROW_ID, owner_id: authUserId, updated_by: authUserId, data: stateForRemote, updated_at: nowIso }, { onConflict: 'id' });
-
-    if (upsertErr) throw upsertErr;
-
-    localStorage.setItem(LAST_SYNCED_KEY, nowIso);
-    updateSyncStatusBadge('synced', nowIso);
-    pf.failCount = 0;
-    pf.cooldownUntil = 0;
-    return true;
-  } catch (err) {
-    console.error("[Conflict Engine] Push failed:", err);
-    updateSyncStatusBadge('offline', null);
-    pf.failCount = Math.min(pf.failCount + 1, 6);
-    pf.cooldownUntil = Date.now() + Math.min(10 * Math.pow(2, pf.failCount), 300) * 1000; // 10s, 20s, 40s... สูงสุด 5 นาที
-    if (typeof window.logSystemError === 'function') {
-      window.logSystemError('PUSH_FAILED', err.message, err.stack);
-    }
-    return false;
-  }
-};
-
-async function checkAndPullNewerStateOnStartup() {
-  const withTimeout = (promise, ms) => Promise.race([
-    promise,
-    new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), ms))
-  ]);
-
-  try {
-    const client = getSupabaseClient();
-    if (!client) {
-      updateSyncStatusBadge('offline', null);
-      return;
-    }
-    const { data: authData } = await client.auth.getUser();
-    if (!authData?.user) {
-      updateSyncStatusBadge('never', null);
-      return;
-    }
-
-    const result = await withTimeout(
-      client.from('pos_state').select('data, updated_at, owner_id').eq('id', POS_STATE_ROW_ID).maybeSingle(),
-      6000
-    );
-
-    if (result.timedOut) {
-      updateSyncStatusBadge('offline', null);
-      return;
-    }
-
-    const { data, error } = result;
-    if (error || !data) {
-      updateSyncStatusBadge(data ? 'synced' : 'never', null);
-      return;
-    }
-
-    const { data: currentAuth } = await client.auth.getUser();
-    if (data.owner_id && currentAuth?.user?.id && data.owner_id !== currentAuth.user.id) {
-      throw new Error('ข้อมูลในฐานข้อมูลนี้เป็นของบัญชี Supabase อื่น');
-    }
-
-    const lastKnownSync = localStorage.getItem(LAST_SYNCED_KEY);
-    if (lastKnownSync && new Date(data.updated_at) <= new Date(lastKnownSync)) {
-      updateSyncStatusBadge('synced', data.updated_at);
-      return;
-    }
-
-    if (typeof window.runMigrations === 'function') await window.runMigrations(data.data);
-    if (typeof window.autoRepairIfNeeded === 'function') await window.autoRepairIfNeeded(data.data);
-    
-    // Explicit global reassignment
-    window.db = data.data;
-    if (typeof db !== 'undefined') { db = window.db; }
-    
-    localStorage.setItem(LAST_SYNCED_KEY, data.updated_at);
-    updateSyncStatusBadge('synced', data.updated_at);
-    await window.refreshPrivateStorageUrls(true);
-
-    if (typeof renderAll === 'function') renderAll();
-    if (typeof updateShiftUI === 'function') updateShiftUI();
-    if (typeof updateLowStockBadge === 'function') updateLowStockBadge();
-    if (typeof checkStorageQuota === 'function') checkStorageQuota();
-
-    // หมายเหตุสำคัญ: ตรงนี้เคยมีโค้ดที่พยายาม "auto-unlock" หน้าจอ PIN โดยหา user ใน db.users
-    // ที่ id ตรงกับ POS_ACCOUNT_ID แล้วเซ็ต currentUserId/currentUserName ทับ — เป็นโค้ดตกค้างจาก
-    // สถาปัตยกรรมเก่าที่ POS_ACCOUNT_ID เคยหมายถึง "พนักงานที่ login อยู่ตอนนี้" (ก่อนจะแก้เป็น
-    // หมายถึง "ร้าน/บัญชีของเครื่องนี้" ซึ่งปกติคือ id ของเจ้าของร้าน) ผลคือทุกครั้งที่ฟังก์ชันนี้ถูก
-    // เรียกหลัง login สำเร็จ (จุดเรียกเดียวคือใน submitAccountLogin หลังยืนยัน PIN ถูกต้องแล้ว)
-    // มันจะเงียบๆ สลับตัวตนที่ใช้บันทึกลง audit log/ใบเสร็จกลับไปเป็น "เจ้าของร้าน" เสมอ ไม่ว่า
-    // พนักงานคนไหนเพิ่ง login จริงก็ตาม — ทำให้ระบบบันทึกผิดคนว่าใครทำรายการขาย/เปิดกะ ฯลฯ ตัด
-    // ออกทั้งบล็อกเพราะไม่จำเป็น (หน้าจอ PIN ถูกซ่อนและ currentUserId ถูกตั้งค่าถูกต้องแล้วใน
-    // submitAccountLogin ก่อนจะเรียกฟังก์ชันนี้เสมอ)
-  } catch (err) {
-    console.error("Startup sync check failed:", err);
-    updateSyncStatusBadge('offline', null);
-  }
-}
-
-function updateSyncStatusBadge(state, timestamp) {
-  const el = document.getElementById('supabase-sync-badge');
-  if (!el) return;
-  if (state === 'synced') {
-    el.innerText = '🟢 ซิงค์แล้ว';
-    el.title = timestamp ? `อัปเดตล่าสุด: ${new Date(timestamp).toLocaleString('th-TH')}` : '';
-  } else if (state === 'offline') {
-    el.innerText = '🔴 ออฟไลน์/ขัดแย้ง';
-    el.title = 'เชื่อมต่อ Supabase ไม่ได้ หรือพบการชนกันของข้อมูล';
-  } else if (state === 'never') {
-    el.innerText = '⚪ ยังไม่เคยซิงค์';
-  }
-}
-window.updateSyncStatusBadge = updateSyncStatusBadge;
-
-
-window.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const hasAccount = !!localStorage.getItem('POS_ACCOUNT_ID');
-    const hasSupabaseConfig = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
-    // ห้ามดึงข้อมูล remote ตอน startup ก่อน Login/Auth สำเร็จ
-    if (hasAccount && hasSupabaseConfig) updateSyncStatusBadge('never', null);
-    else updateSyncStatusBadge('never', null);
-  } finally {
-    const splash = document.getElementById('sync-splash-screen');
-    if (splash) splash.remove();
-  }
-});
-
-// ==========================================
-// AUDIT LOG → SUPABASE (APPEND-ONLY SECURITY CHECK)
-// ==========================================
-const _originalLogTransactionForSync = window.logTransaction;
-window.logTransaction = async function (action, details = {}, opts = {}) {
-  const entry = _originalLogTransactionForSync ? await _originalLogTransactionForSync(action, details, opts) : null;
-  if (!entry) return null;
-  
-  try {
-    const deviceBadge = document.getElementById('device-id-badge');
-    const deviceId = (deviceBadge?.innerText || '').replace('DEVICE: ', '').trim() || window.__deviceId || null;
-    
-    // Strict append-only insert; actor identity comes from Supabase Auth, not browser payload.
-    const authUser = (await getSupabaseClient().auth.getUser()).data?.user;
-    getSupabaseClient().from('audit_log').insert([{
-      id: entry.id,
-      owner_id: authUser?.id || null,
-      created_by: authUser?.id || null,
-      ts: entry.ts,
-      action: entry.action,
-      actor: entry.actor,
-      details: entry.details,
-      device_id: deviceId
-    }]).then(({ error }) => {
-      if (error) {
-         console.warn("Audit log append-only push failed (Check network/RLS policies):", error);
+      // ==========================================
+      // STORAGE QUOTA WARNING
+      // ==========================================
+      // Everything lives in the browser's IndexedDB (via localforage) on this one device.
+      // Years of accumulated bills can eventually approach the browser's storage quota,
+      // which would make saves start failing. Warn early so there's time to archive
+      // before that happens, rather than finding out via a failed save.
+      async function checkStorageQuota() {
+        try {
+          if (!(navigator.storage && navigator.storage.estimate)) return;
+          const est = await navigator.storage.estimate();
+          const banner = document.getElementById('storage-warning-banner');
+          if (!banner || !est.quota || !est.usage) return;
+          const pct = (est.usage / est.quota) * 100;
+          if (pct >= 80) {
+            const usageMB = (est.usage / (1024 * 1024)).toFixed(1);
+            const quotaMB = (est.quota / (1024 * 1024)).toFixed(0);
+            banner.innerText = `⚠️ พื้นที่จัดเก็บข้อมูลใช้ไปแล้ว ${pct.toFixed(0)}% (${usageMB}MB จาก ${quotaMB}MB) แนะนำให้ตรวจสอบและลดข้อมูลที่ไม่จำเป็นเพื่อคืนพื้นที่`;
+            banner.classList.remove('hidden');
+          } else {
+            banner.classList.add('hidden');
+          }
+        } catch (e) {
+          console.error("Storage quota check failed:", e);
+        }
       }
-    }).catch(err => console.error("Audit log network err:", err));
-  } catch (e) {}
-  
+
+      // ==========================================
+      // AUTOMATIC BACKUP
+      // ==========================================
+      const AUTO_BACKUP_DATE_KEY = 'POS_LAST_AUTO_BACKUP_DATE';
+      // Runs once per calendar day (checked at app startup) so a backup file downloads
+      // automatically without anyone having to remember to press "Backup" — covers stores
+      // that stay open continuously or where a shift is never formally closed.
+      // Keeps a rotating set of recent backup snapshots INSIDE the app's own
+      // storage (localforage), separate from the Downloads-folder file export.
+      // This is real cleanup — code can delete its own IndexedDB entries, but
+      // it cannot reach into the device's Downloads/Files folder to delete
+      // files already saved there (browsers don't allow that, by design).
+      const IN_APP_BACKUP_PREFIX = "in_app_backup_";
+      const IN_APP_BACKUP_KEEP = 14; // keep last 14 daily snapshots, prune older
+
+      async function saveInAppBackupSnapshot() {
+        try {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          await localforage.setItem(IN_APP_BACKUP_PREFIX + todayStr, {
+            savedAt: new Date().toISOString(),
+            data: db
+          });
+          const keys = await localforage.keys();
+          const backupKeys = keys.filter(k => k.startsWith(IN_APP_BACKUP_PREFIX)).sort();
+          if (backupKeys.length > IN_APP_BACKUP_KEEP) {
+            const toRemove = backupKeys.slice(0, backupKeys.length - IN_APP_BACKUP_KEEP);
+            for (const k of toRemove) await localforage.removeItem(k);
+          }
+        } catch (e) { console.error("In-app backup snapshot failed:", e); }
+      }
+      window.saveInAppBackupSnapshot = saveInAppBackupSnapshot;
+
+      window.listInAppBackups = async function () {
+        const keys = await localforage.keys();
+        return keys.filter(k => k.startsWith(IN_APP_BACKUP_PREFIX)).sort().reverse();
+      };
+
+      async function runDailyAutoBackupIfNeeded() {
+        try {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const lastBackupDate = await localforage.getItem(AUTO_BACKUP_DATE_KEY);
+          if (lastBackupDate === todayStr) return;
+
+          // Every day: save a lightweight in-app snapshot (auto-rotated, no clutter)
+          await saveInAppBackupSnapshot();
+
+          // Only once a WEEK: also force a real file into the Downloads folder,
+          // since the app has no way to clean those up automatically and daily
+          // files would pile up forever on the device.
+          const lastFileBackupAt = await localforage.getItem(LAST_BACKUP_KEY);
+          const daysSinceFileBackup = lastFileBackupAt ? Math.floor((Date.now() - new Date(lastFileBackupAt).getTime()) / 86400000) : 999;
+          if (daysSinceFileBackup >= 7) {
+            downloadJSONFile(db, "AutoBackup_Weekly");
+            await markBackupCompleted();
+            showToast("สำรองข้อมูลประจำสัปดาห์อัตโนมัติแล้ว (ไฟล์ AutoBackup_Weekly ในโฟลเดอร์ดาวน์โหลด)");
+          }
+
+          await localforage.setItem(AUTO_BACKUP_DATE_KEY, todayStr);
+        } catch (e) {
+          console.error("Daily auto backup failed:", e);
+        }
+      }
+      // Also triggered right when a shift/store is closed for the day (see
+      // closeShiftProcess), so the backup naturally lines up with end-of-day, and marks
+      // today's date as already backed up so the startup check above won't duplicate it.
+      async function runAutoBackupNow(filenamePrefix) {
+        try {
+          downloadJSONFile(db, filenamePrefix || "AutoBackup_ShiftClose");
+          await localforage.setItem(AUTO_BACKUP_DATE_KEY, new Date().toISOString().slice(0, 10));
+          await markBackupCompleted();
+        } catch (e) {
+          console.error("Auto backup on shift close failed:", e);
+        }
+      }
+
+// ==========================================
+// DATABASE VALIDATOR
+// ==========================================
+// Pure, side-effect-free checks of the in-memory db object's structure and
+// referential integrity. Used at startup (before rendering anything), before
+// restoring a backup, and on demand from the DB Health admin panel.
+//
+// validateDatabase() never modifies db — see autoRepair.js for the module
+// that actually fixes problems this finds.
+
+
+function typeOf(v) {
+  if (Array.isArray(v)) return 'array';
+  if (v === null) return 'null';
+  return typeof v;
+}
+
+/**
+ * @param {object} db
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}}
+ */
+function validateDatabase(db) {
+  const errors = [];
+  const warnings = [];
+
+  if (!db || typeof db !== 'object') {
+    return { valid: false, errors: ['ฐานข้อมูลว่างเปล่าหรือไม่ใช่ object'], warnings };
+  }
+
+  // --- 1. Top-level shape & types ---
+  for (const [key, expectedType] of Object.entries(DB_TOP_LEVEL_TYPES)) {
+    if (!(key in db)) {
+      errors.push(`ขาดฟิลด์หลัก: "${key}"`);
+      continue;
+    }
+    const actual = typeOf(db[key]);
+    if (actual !== expectedType) {
+      errors.push(`ฟิลด์ "${key}" ควรเป็น ${expectedType} แต่พบ ${actual}`);
+    }
+  }
+
+  if (typeOf(db.products) !== 'object' || typeOf(db.customers) !== 'object' || typeOf(db.categories) !== 'array') {
+    // Can't safely run the referential checks below without these — bail early.
+    return { valid: errors.length === 0, errors, warnings };
+  }
+
+  const categoryNames = new Set((db.categories || []).map(c => c.name));
+  const productIds = new Set(Object.keys(db.products || {}));
+  const variantIds = new Set();
+  const barcodeSeen = new Map();
+
+  // --- 2. Products / variants / fractions ---
+  for (const [pid, p] of Object.entries(db.products || {})) {
+    if (pid !== p.id) errors.push(`สินค้า key "${pid}" กับ id ภายใน "${p.id}" ไม่ตรงกัน`);
+    if (!p.name) warnings.push(`สินค้า ${pid} ไม่มีชื่อ`);
+    if (!Array.isArray(p.variants)) {
+      errors.push(`สินค้า ${pid} ไม่มี variants เป็น array`);
+      continue;
+    }
+    if (p.variants.length === 0) warnings.push(`สินค้า ${pid} (${p.name || '-'}) ไม่มีหน่วยสินค้า (variant) เลย`);
+    (p.cat || []).forEach(catName => {
+      if (!categoryNames.has(catName)) warnings.push(`สินค้า ${pid} อ้างอิงหมวดหมู่ "${catName}" ที่ไม่มีอยู่จริง`);
+    });
+    p.variants.forEach(v => {
+      variantIds.add(v.id);
+      if (typeof v.stock !== 'number' || isNaN(v.stock)) errors.push(`variant ${v.id} (${pid}) มี stock ไม่ใช่ตัวเลข`);
+      else if (v.stock < 0) warnings.push(`variant ${v.id} (${pid}) มี stock ติดลบ (${v.stock})`);
+      if (typeof v.price !== 'number' || isNaN(v.price)) errors.push(`variant ${v.id} (${pid}) มี price ไม่ใช่ตัวเลข`);
+      if (typeof v.cost !== 'number' || isNaN(v.cost)) warnings.push(`variant ${v.id} (${pid}) มี cost ไม่ใช่ตัวเลข`);
+      if (v.barcode) {
+        if (barcodeSeen.has(v.barcode)) {
+          errors.push(`บาร์โค้ด "${v.barcode}" ซ้ำกันระหว่าง variant ${barcodeSeen.get(v.barcode)} และ ${v.id}`);
+        } else {
+          barcodeSeen.set(v.barcode, v.id);
+        }
+      }
+      (v.fractions || []).forEach(f => {
+        if (typeof f.fractionMultiplier !== 'number' || f.fractionMultiplier <= 0) {
+          errors.push(`หน่วยย่อย ${f.id} ของ variant ${v.id} มี fractionMultiplier ไม่ถูกต้อง`);
+        }
+      });
+    });
+  }
+
+  // --- 3. Categories ---
+  const catIdSeen = new Set();
+  (db.categories || []).forEach(c => {
+    if (catIdSeen.has(c.id)) errors.push(`หมวดหมู่ id "${c.id}" ซ้ำ`);
+    catIdSeen.add(c.id);
+    if (!c.name) warnings.push(`หมวดหมู่ ${c.id} ไม่มีชื่อ`);
+  });
+
+  // --- 4. Customers ---
+  for (const [cid, c] of Object.entries(db.customers || {})) {
+    if (cid !== c.id) errors.push(`ลูกค้า key "${cid}" กับ id ภายใน "${c.id}" ไม่ตรงกัน`);
+    if (typeof c.debt !== 'number' || isNaN(c.debt)) errors.push(`ลูกค้า ${cid} มี debt ไม่ใช่ตัวเลข`);
+    else if (c.debt < 0) warnings.push(`ลูกค้า ${cid} มียอดหนี้ติดลบ (${c.debt})`);
+  }
+
+  // --- 5. Bills reference existing products/customers ---
+  if (Array.isArray(db.bills)) {
+    db.bills.forEach(b => {
+      if (b.customerId && !db.customers[b.customerId]) {
+        warnings.push(`บิล ${b.id || '(ไม่มี id)'} อ้างอิงลูกค้า "${b.customerId}" ที่ไม่มีอยู่จริง`);
+      }
+      (b.items || []).forEach(item => {
+        if (item.productId && !productIds.has(item.productId)) {
+          warnings.push(`บิล ${b.id || '(ไม่มี id)'} มีรายการอ้างอิงสินค้า "${item.productId}" ที่ไม่มีอยู่จริง (อาจถูกลบไปแล้ว)`);
+        }
+      });
+    });
+  }
+
+  // --- 6. Counters sanity ---
+  if (db.counters && typeof db.counters === 'object') {
+    ['product', 'customer', 'category', 'po', 'barcode', 'variant'].forEach(k => {
+      if (typeof db.counters[k] !== 'number') warnings.push(`counters.${k} ไม่ใช่ตัวเลข`);
+    });
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+window.validateDatabase = validateDatabase;
+
+
+// ============ FROM: Smart-pos-pro-v9-modular/js/db/health.js ============
+// ==========================================
+// DATABASE HEALTH
+// ==========================================
+// Turns validateDatabase()'s raw errors/warnings plus a few operational
+// signals (storage quota, last backup date, log size) into a single 0-100
+// health score and a human-readable report, for the admin "DB Health" panel.
+
+
+const LAST_HEALTH_CHECK_KEY = "smart_pos_pro_v620_last_health_check";
+const LAST_BACKUP_KEY = "smart_pos_pro_v620_last_backup_at";
+
+/**
+ * @param {object} db
+ * @returns {Promise<{score:number, grade:string, errors:string[], warnings:string[], stats:object}>}
+ */
+async function checkDatabaseHealth(db) {
+  const { valid, errors, warnings } = validateDatabase(db);
+
+  let score = 100;
+  score -= errors.length * 12;   // structural errors are serious
+  score -= warnings.length * 3;  // warnings are minor deductions
+  score = Math.max(0, Math.min(100, score));
+
+  // Storage quota
+  let quotaUsedPct = null;
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      if (est.quota) quotaUsedPct = Math.round((est.usage / est.quota) * 1000) / 10;
+    }
+  } catch (e) { /* not fatal — some browsers don't support this */ }
+  if (quotaUsedPct !== null && quotaUsedPct > 85) {
+    warnings.push(`พื้นที่จัดเก็บของเบราว์เซอร์ใกล้เต็ม (ใช้ไปแล้ว ${quotaUsedPct}%)`);
+    score -= 10;
+  }
+
+  // Last backup recency
+  let lastBackupAt = null;
+  try { lastBackupAt = await localforage.getItem(LAST_BACKUP_KEY); } catch (e) {}
+  let daysSinceBackup = null;
+  if (lastBackupAt) {
+    daysSinceBackup = Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86400000);
+    if (daysSinceBackup > 7) {
+      warnings.push(`ไม่ได้สำรองข้อมูลมา ${daysSinceBackup} วันแล้ว`);
+      score -= 5;
+    }
+  } else {
+    warnings.push('ยังไม่เคยสำรองข้อมูล (backup) เลย');
+    score -= 5;
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F';
+
+  const auditLogCount = await getAuditLogCount().catch(() => 0);
+
+  const stats = {
+    productCount: Object.keys(db.products || {}).length,
+    customerCount: Object.keys(db.customers || {}).length,
+    billCount: (db.bills || []).length,
+    categoryCount: (db.categories || []).length,
+    quotaUsedPct,
+    lastBackupAt,
+    daysSinceBackup,
+    auditLogCount,
+    schemaVersion: db.schemaVersion || 0
+  };
+
+  const report = { valid, score, grade, errors, warnings, stats, checkedAt: new Date().toISOString() };
+
+  try { await localforage.setItem(LAST_HEALTH_CHECK_KEY, report.checkedAt); } catch (e) {}
+
+  return report;
+}
+
+/** Call whenever a manual/auto backup succeeds, so health checks know backup recency. */
+async function markBackupCompleted() {
+  try { await localforage.setItem(LAST_BACKUP_KEY, new Date().toISOString()); } catch (e) {}
+}
+
+window.checkDatabaseHealth = checkDatabaseHealth;
+window.markBackupCompleted = markBackupCompleted;
+
+
+// ============ FROM: Smart-pos-pro-v9-modular/js/db/auditLog.js ============
+// ==========================================
+// TRANSACTION / AUDIT LOG
+// ==========================================
+// An append-only record of every business-critical action (sale, refund,
+// stock adjustment, debt payment, PO receipt, product/price edits, settings
+// changes, manual repairs, restores, ...). Stored under its OWN localforage
+// key (not inside the main db object) so that:
+//   1) restoring/importing a database backup can never wipe out history of
+//      what happened before the restore, and
+//   2) the frequently-saved main db object doesn't grow unbounded with log
+//      entries, which would slow down every autosave.
+//
+// Entries are capped (see MAX_ENTRIES) with the oldest entries trimmed off
+// first — this is a POS running in a single browser tab, not a general
+// ledger, so unbounded growth would eventually blow the storage quota.
+
+const AUDIT_LOG_KEY = "smart_pos_pro_v620_audit_log";
+const MAX_ENTRIES = 5000;
+
+let cachedLog = null; // in-memory cache, hydrated on first use
+
+async function loadLog() {
+  if (cachedLog) return cachedLog;
+  try {
+    const raw = await localforage.getItem(AUDIT_LOG_KEY);
+    cachedLog = Array.isArray(raw) ? raw : [];
+  } catch (e) {
+    console.error("Audit log load failed:", e);
+    cachedLog = [];
+  }
+  return cachedLog;
+}
+
+async function saveLog() {
+  try {
+    await localforage.setItem(AUDIT_LOG_KEY, cachedLog);
+  } catch (e) {
+    // The audit log is diagnostic/history data — losing a write to it should
+    // never block or corrupt the actual POS transaction that triggered it.
+    console.error("Audit log save failed:", e);
+  }
+}
+
+/**
+ * Records one entry in the transaction/audit log.
+ * @param {string} action   short machine key, e.g. "SALE", "REFUND", "STOCK_ADJUST",
+ *                           "DEBT_PAYMENT", "PO_RECEIVE", "PRODUCT_EDIT", "SETTINGS_EDIT",
+ *                           "AUTO_REPAIR", "DB_RESTORE", "DB_RESET"
+ * @param {object} details  free-form metadata about the action (ids, amounts, before/after)
+ * @param {object} [opts]
+ * @param {string} [opts.actor]  who performed it (device id / "manager" / "system")
+ */
+async function logTransaction(action, details = {}, opts = {}) {
+  const log = await loadLog();
+  const entry = {
+    id: 'AL' + crypto.randomUUID().replace(/-/g,'').toUpperCase(),
+    ts: new Date().toISOString(),
+    action,
+    actor: opts.actor || currentUserName || (window.__deviceId || 'unknown'),
+    details
+  };
+  log.push(entry);
+  if (log.length > MAX_ENTRIES) log.splice(0, log.length - MAX_ENTRIES);
+  await saveLog();
   return entry;
+}
+
+/** Returns log entries, most recent first. Optionally filtered by action or date range. */
+async function getAuditLog({ action = null, since = null, limit = 200 } = {}) {
+  const log = await loadLog();
+  let out = log.slice().reverse();
+  if (action) out = out.filter(e => e.action === action);
+  if (since) out = out.filter(e => new Date(e.ts) >= new Date(since));
+  return out.slice(0, limit);
+}
+
+/** Total entry count — used by the DB Health panel. */
+async function getAuditLogCount() {
+  const log = await loadLog();
+  return log.length;
+}
+
+/** Exports the full audit log as a downloadable JSON blob (for accountants / disputes). */
+async function exportAuditLog() {
+  const log = await loadLog();
+  const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Clears the audit log. Only ever called explicitly by a manager from the admin panel. */
+async function clearAuditLog() {
+  cachedLog = [];
+  await saveLog();
+}
+
+window.logTransaction = logTransaction;
+window.getAuditLog = getAuditLog;
+window.exportAuditLog = exportAuditLog;
+
+
+// ============ FROM: Smart-pos-pro-v9-modular/js/db/autoRepair.js ============
+// ==========================================
+// DATABASE AUTO REPAIR
+// ==========================================
+// Fixes the class of problems that are safe to fix automatically without
+// human judgement: missing arrays/objects reset to empty, missing fields
+// filled from defaults, negative stock clamped to 0, orphaned category
+// references dropped, duplicate top-level ids de-duplicated. Never deletes
+// bills/customers/products — only ever repairs *shape*, never business data,
+// and every fix taken is recorded so it's auditable.
+//
+// Anything it can't safely fix on its own (e.g. a bill referencing a genuinely
+// deleted product — that's just history, and is left alone) is left for a
+// human to review in the DB Health panel.
+
+
+/**
+ * Mutates `db` in place, fixing what it safely can.
+ * @param {object} db
+ * @returns {{fixes: string[], remaining: {errors:string[], warnings:string[]}}}
+ */
+function repairDatabase(db) {
+  const fixes = [];
+
+  // 1. Missing/wrong-typed top-level fields → reset to default shape.
+  for (const [key, expectedType] of Object.entries(DB_TOP_LEVEL_TYPES)) {
+    const actual = Array.isArray(db[key]) ? 'array' : (db[key] === null ? 'null' : typeof db[key]);
+    if (!(key in db) || actual !== expectedType) {
+      db[key] = JSON.parse(JSON.stringify(DB_DEFAULT[key] ?? (expectedType === 'array' ? [] : expectedType === 'object' ? {} : '')));
+      fixes.push(`ตั้งค่าฟิลด์ "${key}" ใหม่เป็นค่าเริ่มต้น (เดิมหายไปหรือชนิดข้อมูลผิด)`);
+    }
+  }
+  db.settings = { ...DB_DEFAULT.settings, ...(db.settings || {}) };
+  db.counters = { ...DB_DEFAULT.counters, ...(db.counters || {}) };
+  db.security = { ...DB_DEFAULT.security, ...(db.security || {}) };
+
+  // 2. Products / variants
+  const seenBarcodes = new Set();
+  Object.entries(db.products || {}).forEach(([pid, p]) => {
+    if (p.id !== pid) { p.id = pid; fixes.push(`แก้ไข id ภายในของสินค้า ${pid} ให้ตรงกับ key`); }
+    if (!Array.isArray(p.variants)) { p.variants = []; fixes.push(`สินค้า ${pid} ไม่มี variants → ตั้งเป็น array ว่าง`); }
+    if (!Array.isArray(p.cat)) { p.cat = []; fixes.push(`สินค้า ${pid} มี cat ผิดชนิด → ตั้งเป็น array ว่าง`); }
+    p.variants.forEach(v => {
+      if (typeof v.stock !== 'number' || isNaN(v.stock)) { v.stock = 0; fixes.push(`variant ${v.id} มี stock ผิดพลาด → ตั้งเป็น 0`); }
+      else if (v.stock < 0) { v.stock = 0; fixes.push(`variant ${v.id} มี stock ติดลบ → ปรับเป็น 0`); }
+      if (typeof v.price !== 'number' || isNaN(v.price)) { v.price = 0; fixes.push(`variant ${v.id} มี price ผิดพลาด → ตั้งเป็น 0`); }
+      if (typeof v.cost !== 'number' || isNaN(v.cost)) { v.cost = 0; fixes.push(`variant ${v.id} มี cost ผิดพลาด → ตั้งเป็น 0`); }
+      if (v.minStock === undefined) v.minStock = 10;
+      if (!Array.isArray(v.fractions)) { v.fractions = []; fixes.push(`variant ${v.id} มี fractions ผิดชนิด → ตั้งเป็น array ว่าง`); }
+      if (v.barcode) {
+        if (seenBarcodes.has(v.barcode)) {
+          const oldBarcode = v.barcode;
+          v.barcode = oldBarcode + '-DUP-' + v.id;
+          fixes.push(`บาร์โค้ดซ้ำ "${oldBarcode}" ที่ variant ${v.id} → เปลี่ยนเป็น "${v.barcode}" ชั่วคราว (โปรดตรวจสอบ)`);
+        } else {
+          seenBarcodes.add(v.barcode);
+        }
+      }
+    });
+  });
+
+  // 3. Categories — drop exact-duplicate ids, keep first occurrence.
+  const seenCatIds = new Set();
+  const dedupedCats = [];
+  (db.categories || []).forEach(c => {
+    if (seenCatIds.has(c.id)) { fixes.push(`ลบหมวดหมู่ id "${c.id}" ที่ซ้ำกัน`); return; }
+    seenCatIds.add(c.id);
+    dedupedCats.push(c);
+  });
+  db.categories = dedupedCats;
+
+  // 4. Customers
+  Object.entries(db.customers || {}).forEach(([cid, c]) => {
+    if (c.id !== cid) { c.id = cid; fixes.push(`แก้ไข id ภายในของลูกค้า ${cid} ให้ตรงกับ key`); }
+    if (typeof c.debt !== 'number' || isNaN(c.debt)) { c.debt = 0; fixes.push(`ลูกค้า ${cid} มียอดหนี้ผิดพลาด → ตั้งเป็น 0`); }
+  });
+
+  const remaining = validateDatabase(db);
+  return { fixes, remaining };
+}
+
+/**
+ * Runs the validator; if it finds errors, repairs and logs what changed.
+ * Safe to call on every startup — it's a no-op (besides the validation
+ * pass) when the database is already healthy.
+ */
+async function autoRepairIfNeeded(db) {
+  const before = validateDatabase(db);
+  if (before.valid) return { ran: false, fixes: [], before, after: before };
+
+  const { fixes, remaining } = repairDatabase(db);
+  await logTransaction('AUTO_REPAIR', { beforeErrors: before.errors, fixes, remainingErrors: remaining.errors });
+  return { ran: true, fixes, before, after: remaining };
+}
+
+window.repairDatabase = repairDatabase;
+window.autoRepairIfNeeded = autoRepairIfNeeded;
+
+
+// ============ FROM: Smart-pos-pro-v9-modular/js/db/versioning.js ============
+// ==========================================
+// DATABASE VERSIONING / MIGRATIONS
+// ==========================================
+// Every db object now carries a `schemaVersion` number. On load, we walk
+// forward from whatever version the saved data is at, applying one
+// migration function per step, until we reach SCHEMA_VERSION. This replaces
+// the old approach of scattering one-off "if (!db.foo) db.foo = ..." patches
+// through the init code — new migrations are added here, in one place, and
+// every migration that ever ran is recorded to the audit log.
+//
+// HOW TO ADD A NEW MIGRATION:
+//   1. Bump SCHEMA_VERSION in db/schema.js by 1.
+//   2. Add a new entry to MIGRATIONS below keyed by the OLD version number
+//      (i.e. the migration that turns a v1 db into a v2 db is keyed `1`).
+//   3. The migrate(db) function mutates db in place and doesn't need to set
+//      schemaVersion itself — the runner does that.
+
+
+const MIGRATIONS = {
+  2: {
+    description: 'เพิ่มฟิลด์สมาชิก Cloud และโครงสร้างต้นทุน/Sync รุ่น v2.3',
+    migrate(db) {
+      db.users = Array.isArray(db.users) ? db.users : [];
+      db.users.forEach(u => { if (u.email === undefined) u.email = ''; });
+      db.stockMovements = Array.isArray(db.stockMovements) ? db.stockMovements : [];
+      db.purchaseHistory = Array.isArray(db.purchaseHistory) ? db.purchaseHistory : [];
+      db.costHistory = Array.isArray(db.costHistory) ? db.costHistory : [];
+      db.saleTransactions = Array.isArray(db.saleTransactions) ? db.saleTransactions : [];
+      db.settings = db.settings || {};
+      if (db.settings.minMarginPct === undefined) db.settings.minMarginPct = 20;
+      Object.values(db.products || {}).forEach(p => (p.variants || []).forEach(v => {
+        const c = roundAmt(v.cost || 0);
+        if (v.lastCost == null) v.lastCost = c;
+        if (v.currentCost == null) v.currentCost = c;
+        if (v.minMarginPct == null) v.minMarginPct = db.settings.minMarginPct;
+      }));
+    }
+  },
+  // Example shape for the future:
+  // 1: {
+  //   description: "เพิ่มฟิลด์ suppliers[].terms",
+  //   migrate(db) { ... }
+  // },
 };
 
-window.signOutSupabaseOnly=async function(){try{if(_supabaseClient)await _supabaseClient.auth.signOut();}catch(_){} _supabaseClient=null; _supabaseAuthSubscription=null; window.POS_SUPABASE_SESSION=null; window.POS_SUPABASE_AUTH_STATE='SIGNED_OUT';};
+/**
+ * Applies any pending migrations to `db` in place.
+ * @returns {Promise<{migrated: boolean, fromVersion: number, toVersion: number, steps: string[]}>}
+ */
+async function runMigrations(db) {
+  const fromVersion = typeof db.schemaVersion === 'number' ? db.schemaVersion : 0;
+  const steps = [];
+  let v = fromVersion;
+
+  while (v < SCHEMA_VERSION) {
+    const step = MIGRATIONS[v];
+    if (step) {
+      step.migrate(db);
+      steps.push(`v${v} → v${v + 1}: ${step.description}`);
+    }
+    v++;
+  }
+
+  db.schemaVersion = SCHEMA_VERSION;
+
+  if (steps.length > 0) {
+    await logTransaction('DB_MIGRATION', { fromVersion, toVersion: SCHEMA_VERSION, steps });
+  }
+
+  return { migrated: steps.length > 0, fromVersion, toVersion: SCHEMA_VERSION, steps };
+}
+
+window.runMigrations = runMigrations;
+
+
+// ============ FROM: Smart-pos-pro-v9-modular/js/db/adminPanel.js ============
+// ==========================================
+// DB HEALTH / AUDIT LOG — ADMIN PANEL UI
+// ==========================================
+// Thin UI layer over db/health.js, db/validator.js, db/autoRepair.js and
+// db/auditLog.js. Opened from ⚙️ ตั้งค่า > 🩺 เปิดแผงควบคุมฐานข้อมูล.
+
+
+const ACTION_LABELS = {
+  SALE: '🛒 ขายสินค้า',
+  REFUND: '↩️ คืนสินค้า/เงิน',
+  STOCK_ADJUST: '⚖️ ปรับสต็อก',
+  DEBT_PAYMENT: '💵 รับชำระหนี้',
+  PO_RECEIVE: '📦 รับของเข้าสต็อก',
+  SUPPLIER_PAYMENT: '🤝 จ่ายเงินเจ้าหนี้',
+  AUTO_REPAIR: '🔧 ซ่อมแซมอัตโนมัติ',
+  DB_MIGRATION: '🗂️ อัปเดตโครงสร้างข้อมูล',
+  DB_RESTORE: '📥 กู้คืนฐานข้อมูล'
+};
+
+function scoreColor(score) {
+  if (score >= 90) return 'text-emerald-600';
+  if (score >= 75) return 'text-lime-600';
+  if (score >= 50) return 'text-amber-600';
+  return 'text-rose-600';
+}
+
+async function renderDbHealthPanel() {
+  const el = document.getElementById('db-health-content');
+  el.innerHTML = `<p class="text-center text-slate-400 py-8">กำลังตรวจสอบ...</p>`;
+
+  const report = await checkDatabaseHealth(db);
+
+  const errorsHTML = report.errors.length
+    ? `<ul class="list-disc list-inside space-y-1 text-rose-700">${report.errors.map(e => `<li>${escapeHTML(e)}</li>`).join('')}</ul>`
+    : `<p class="text-emerald-600">✓ ไม่พบข้อผิดพลาดเชิงโครงสร้าง</p>`;
+
+  const warningsHTML = report.warnings.length
+    ? `<ul class="list-disc list-inside space-y-1 text-amber-700">${report.warnings.map(w => `<li>${escapeHTML(w)}</li>`).join('')}</ul>`
+    : `<p class="text-emerald-600">✓ ไม่พบคำเตือน</p>`;
+
+  el.innerHTML = `
+    <div class="flex items-center justify-between bg-slate-50 rounded-2xl p-4 border">
+      <div>
+        <div class="text-[10px] text-slate-400 font-bold">คะแนนสุขภาพฐานข้อมูล</div>
+        <div class="text-3xl font-bold ${scoreColor(report.score)}">${report.score}/100 <span class="text-lg">(${report.grade})</span></div>
+      </div>
+      <div class="text-right text-[10px] text-slate-500 leading-relaxed">
+        <div>สินค้า: ${report.stats.productCount} รายการ</div>
+        <div>ลูกค้า: ${report.stats.customerCount} ราย</div>
+        <div>บิล: ${report.stats.billCount} ใบ</div>
+        <div>เวอร์ชันโครงสร้าง: v${report.stats.schemaVersion}</div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl border p-3">
+      <div class="text-[10px] text-slate-500 mb-1">พื้นที่จัดเก็บที่ใช้ไป</div>
+      <div class="font-bold">${report.stats.quotaUsedPct !== null ? report.stats.quotaUsedPct + '%' : 'ไม่สามารถตรวจสอบได้'}</div>
+    </div>
+    <div class="bg-white rounded-2xl border p-3">
+      <div class="text-[10px] text-slate-500 mb-1">สำรองข้อมูลล่าสุด</div>
+      <div class="font-bold">${report.stats.daysSinceBackup === null ? 'ยังไม่เคยสำรองข้อมูล' : (report.stats.daysSinceBackup === 0 ? 'วันนี้' : report.stats.daysSinceBackup + ' วันที่แล้ว')}</div>
+    </div>
+
+    <div>
+      <div class="text-xs font-bold text-rose-700 mb-1">❌ ข้อผิดพลาด (${report.errors.length})</div>
+      ${errorsHTML}
+    </div>
+    <div>
+      <div class="text-xs font-bold text-amber-700 mb-1">⚠️ คำเตือน (${report.warnings.length})</div>
+      ${warningsHTML}
+    </div>
+
+    <div class="bg-white rounded-2xl border p-3">
+      <div class="text-[10px] text-slate-500 mb-2">📸 สำรองข้อมูลในเครื่อง (อัตโนมัติ เก็บย้อนหลัง 14 วันล่าสุด — เก่ากว่านั้นถูกลบทิ้งให้อัตโนมัติ)</div>
+      <div id="in-app-backup-list" class="space-y-1"></div>
+    </div>
+
+    <div class="flex gap-2 pt-2">
+      <button onclick="window.runAutoRepairFromPanel()" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs btn-touch">🔧 ซ่อมแซมอัตโนมัติ</button>
+      <button onclick="window.openAuditLogModal()" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-xl font-bold text-xs btn-touch">📜 ดู Audit Log</button>
+    </div>
+  `;
+
+  await window.renderInAppBackupList();
+}
+
+window.renderInAppBackupList = async function () {
+  const listEl = document.getElementById('in-app-backup-list');
+  if (!listEl) return;
+  const keys = await window.listInAppBackups();
+  if (keys.length === 0) {
+    listEl.innerHTML = `<p class="text-[10px] text-slate-400">ยังไม่มีสำรองข้อมูลในเครื่อง (จะสร้างให้อัตโนมัติทุกวัน)</p>`;
+    return;
+  }
+  listEl.innerHTML = keys.map(k => {
+    const dateStr = k.replace('in_app_backup_', '');
+    return `
+      <div class="flex justify-between items-center bg-slate-50 rounded-lg px-3 py-2">
+        <span class="text-[10px] font-bold text-slate-600">${escapeHTML(dateStr)}</span>
+        <button onclick="window.restoreInAppBackup('${escapeHTML(k)}')" class="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg btn-touch">↩️ กู้คืนวันนี้</button>
+      </div>
+    `;
+  }).join('');
+};
+
+window.restoreInAppBackup = function (key) {
+  window.showCustomConfirm(
+    '⚠️ กู้คืนข้อมูลจากสำรองนี้?',
+    'ข้อมูลปัจจุบันในเครื่องจะถูกเขียนทับด้วยข้อมูล ณ วันที่เลือก การกระทำนี้ย้อนกลับไม่ได้ (ระบบจะสำรองข้อมูลปัจจุบันเป็นไฟล์ดาวน์โหลดให้ก่อนเสมอ)',
+    async () => {
+      try {
+        downloadJSONFile(db, "BeforeRestore_Safety");
+        const snapshot = await localforage.getItem(key);
+        if (!snapshot || !snapshot.data) return window.showAlert('กู้คืนไม่สำเร็จ', 'ไม่พบข้อมูลสำรองนี้', true);
+        Object.keys(db).forEach(k => delete db[k]);
+        Object.assign(db, snapshot.data);
+        persist();
+        renderAll();
+        if (typeof window.logTransaction === 'function') window.logTransaction('DB_RESTORE', { source: 'in_app_backup', key });
+        showToast('กู้คืนข้อมูลสำเร็จ');
+        window.closeModal('modal-db-health');
+      } catch (err) {
+        window.showAlert('กู้คืนไม่สำเร็จ', 'เกิดข้อผิดพลาด: ' + err.message, true);
+      }
+    }
+  );
+};
+
+window.openDbHealthModal = function () {
+  document.getElementById('modal-db-health').classList.remove('hidden');
+  document.getElementById('modal-db-health').classList.add('flex');
+  renderDbHealthPanel();
+};
+
+window.runAutoRepairFromPanel = function () {
+  window.openManagerPinModal(() => {
+    window.showCustomConfirm(
+      'ซ่อมแซมฐานข้อมูลอัตโนมัติ?',
+      'ระบบจะแก้ไขปัญหาโครงสร้างข้อมูลที่ปลอดภัยต่อการแก้ไขอัตโนมัติ (เช่น ฟิลด์หาย สต็อกติดลบ บาร์โค้ดซ้ำ) การเปลี่ยนแปลงทั้งหมดจะถูกบันทึกลง audit log',
+      async () => {
+        const result = await autoRepairIfNeeded(db);
+        if (result.ran) {
+          persist();
+          showToast(`ซ่อมแซมสำเร็จ ${result.fixes.length} รายการ`);
+        } else {
+          showToast('ไม่พบปัญหาที่ต้องซ่อมแซม');
+        }
+        renderDbHealthPanel();
+      }
+    );
+  });
+};
+
+async function renderAuditLogList() {
+  const listEl = document.getElementById('audit-log-list');
+  listEl.innerHTML = `<p class="text-center text-slate-400 py-6">กำลังโหลด...</p>`;
+  const entries = await getAuditLog({ limit: 200 });
+  if (entries.length === 0) {
+    listEl.innerHTML = `<p class="text-center text-slate-400 py-6">ยังไม่มีประวัติการทำรายการ</p>`;
+    return;
+  }
+  listEl.innerHTML = entries.map(e => {
+    const label = ACTION_LABELS[e.action] || e.action;
+    const time = new Date(e.ts).toLocaleString('th-TH');
+    const detailStr = escapeHTML(JSON.stringify(e.details));
+    return `
+      <div class="bg-slate-50 rounded-xl p-3 border">
+        <div class="flex justify-between items-start">
+          <span class="font-bold">${label}</span>
+          <span class="text-slate-400 text-[10px]">${time}</span>
+        </div>
+        <div class="text-slate-500 text-[10px] mt-1 break-all font-mono">${detailStr}</div>
+      </div>`;
+  }).join('');
+}
+
+window.openAuditLogModal = function () {
+  document.getElementById('modal-audit-log').classList.remove('hidden');
+  document.getElementById('modal-audit-log').classList.add('flex');
+  renderAuditLogList();
+};
+
+
+// ==========================================
+// DANGER ZONE ACTIONS
+// ==========================================
+// These handlers are intentionally defined on window because the admin UI
+// invokes them from inline onclick attributes.  Keep the destructive action
+// behind a typed confirmation and always create a backup first.
+(function () {
+  'use strict';
+
+  function openDangerModal(title, desc, phrase, action) {
+    dangerConfirmAction = action;
+    dangerConfirmPhrase = phrase;
+    const titleEl = document.getElementById('danger-confirm-title');
+    const descEl = document.getElementById('danger-confirm-desc');
+    const hintEl = document.getElementById('danger-confirm-phrase-hint');
+    const input = document.getElementById('danger-confirm-input');
+    const btn = document.getElementById('danger-confirm-btn');
+    if (titleEl) titleEl.innerText = title;
+    if (descEl) descEl.innerText = desc;
+    if (hintEl) hintEl.innerText = phrase;
+    if (input) input.value = '';
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('bg-slate-300', 'cursor-not-allowed');
+      btn.classList.remove('bg-rose-600', 'hover:bg-rose-700');
+    }
+    const modal = document.getElementById('modal-danger-confirm');
+    if (modal) {
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      setTimeout(() => input && input.focus(), 50);
+    }
+  }
+
+  window.checkDangerConfirmInput = function () {
+    const input = document.getElementById('danger-confirm-input');
+    const btn = document.getElementById('danger-confirm-btn');
+    const ok = !!input && input.value.trim() === dangerConfirmPhrase;
+    if (btn) {
+      btn.disabled = !ok;
+      btn.classList.toggle('bg-slate-300', !ok);
+      btn.classList.toggle('cursor-not-allowed', !ok);
+      btn.classList.toggle('bg-rose-600', ok);
+      btn.classList.toggle('hover:bg-rose-700', ok);
+    }
+    return ok;
+  };
+
+  window.openClearProductsModal = function () {
+    openDangerModal(
+      'ล้างข้อมูลสินค้าทั้งหมด?',
+      'ระบบจะสำรองข้อมูลปัจจุบันก่อน แล้วลบสินค้า/ตัวเลือกสินค้าและประวัติต้นทุนที่ผูกกับสินค้าออก การขาย ลูกค้า ผู้ใช้ และการตั้งค่าร้านจะไม่ถูกลบ',
+      'ล้างสินค้า',
+      async function () {
+        const backupOk = typeof downloadJSONFile === 'function'
+          ? downloadJSONFile(db, 'SmartPOS_Before_ClearProducts')
+          : false;
+        if (!backupOk) throw new Error('ไม่สามารถสร้างไฟล์สำรองข้อมูลก่อนล้างสินค้าได้');
+
+        const count = Object.keys(db.products || {}).length;
+        db.products = {};
+        db.categories = [];
+        db.stockMovements = [];
+        db.purchaseHistory = [];
+        db.costHistory = [];
+        db.saleTransactions = Array.isArray(db.saleTransactions) ? db.saleTransactions : [];
+        db.syncQueue = Array.isArray(db.syncQueue) ? db.syncQueue : [];
+        db.pendingSyncs = Array.isArray(db.pendingSyncs) ? db.pendingSyncs : [];
+        db.counters.product = 1;
+        db.counters.category = 1;
+        db.counters.variant = 1;
+        db.counters.barcode = 1;
+        persist();
+        if (typeof logTransaction === 'function') await logTransaction('DB_CLEAR_PRODUCTS', { count });
+        if (typeof window.renderAll === 'function') window.renderAll();
+        if (typeof window.showToast === 'function') window.showToast(`ล้างข้อมูลสินค้า ${count} รายการแล้ว`);
+      }
+    );
+  };
+
+  window.openFullResetModal = function () {
+    openDangerModal(
+      'รีเซ็ตระบบทั้งหมด?',
+      'ระบบจะสำรองข้อมูลปัจจุบันก่อน แล้วคืนฐานข้อมูลของร้านกลับเป็นค่าเริ่มต้น ข้อมูลสินค้า ยอดขาย ลูกค้า ซัพพลายเออร์ กะ และข้อมูลธุรกรรมในเครื่องจะถูกลบทั้งหมด',
+      'รีเซ็ตทั้งหมด',
+      async function () {
+        const backupOk = typeof downloadJSONFile === 'function'
+          ? downloadJSONFile(db, 'SmartPOS_Before_FullReset')
+          : false;
+        if (!backupOk) throw new Error('ไม่สามารถสร้างไฟล์สำรองข้อมูลก่อนรีเซ็ตได้');
+
+        if (typeof window.resetDatabaseToDefaults !== 'function') {
+          throw new Error('ไม่พบตัวจัดการรีเซ็ตฐานข้อมูล');
+        }
+        window.resetDatabaseToDefaults();
+        persist();
+        if (typeof logTransaction === 'function') {
+          // The reset itself is intentionally logged only when an external audit
+          // store is available; the local DB audit history is reset by design.
+          try { await logTransaction('DB_RESET', { source: 'danger_zone' }); } catch (_) {}
+        }
+        if (typeof window.renderAll === 'function') window.renderAll();
+        if (typeof window.showToast === 'function') window.showToast('รีเซ็ตระบบเรียบร้อยแล้ว');
+      }
+    );
+  };
+
+  window.runDangerConfirmAction = async function () {
+    const input = document.getElementById('danger-confirm-input');
+    if (!input || input.value.trim() !== dangerConfirmPhrase || typeof dangerConfirmAction !== 'function') return;
+    const action = dangerConfirmAction;
+    dangerConfirmAction = null;
+    dangerConfirmPhrase = '';
+    window.closeModal('modal-danger-confirm');
+    try {
+      await action();
+    } catch (e) {
+      console.error('Danger-zone action failed:', e);
+      if (typeof window.showAlert === 'function') {
+        window.showAlert('ดำเนินการไม่สำเร็จ', e?.message || 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ', true);
+      }
+    }
+  };
+})();
