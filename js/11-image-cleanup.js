@@ -96,8 +96,9 @@
         // uploadProductImageToSupabase) การ list(user.id) แบบเดิมจะได้แค่โฟลเดอร์
         // "products" กลับมา 1 รายการ (ไม่ใช่ไฟล์รูปจริงข้างในเลย) ทำให้สแกนไม่เจอรูปที่มีอยู่จริง
         // ต้อง list เจาะเข้าไปที่ subfolder นี้โดยตรง
-        const prefix = user.id + '/products/';
-        const { data: files, error } = await client.storage.from('product-images').list(user.id + '/products', { limit: 5000 });
+        const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
+        const prefix = storeId + '/products/';
+        const { data: files, error } = await client.storage.from('product-images').list(storeId + '/products', { limit: 5000 });
         if (error) throw error;
 
         const usedPaths = new Set(

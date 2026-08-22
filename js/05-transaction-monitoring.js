@@ -266,7 +266,7 @@
     const logs = window.getSystemErrorLogs();
     const badgeEl = document.getElementById('device-id-badge');
     const errorEntry = {
-      id: 'ERR-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 5),
+      id: 'ERR-' + crypto.randomUUID(),
       type: type || 'GENERIC_ERROR',
       message: message || 'Unknown error occurred',
       stackTrace: (stackTrace || '').substring(0, 1000), // Cap length
@@ -287,20 +287,14 @@
       if (typeof window.getSupabaseClient === 'function') {
         const client = window.getSupabaseClient();
         if (client) {
-          client.auth.getUser().then(({ data }) => {
-            const uid = data?.user?.id || null;
-            if (!uid) return null;
-            return client.from('error_logs').insert([{
-              id: errorEntry.id,
-              error_type: errorEntry.type,
-              message: errorEntry.message,
-              stack_trace: errorEntry.stackTrace,
-              device_id: errorEntry.deviceId,
-              created_at: errorEntry.time,
-              owner_id: uid,
-              created_by: uid
-            }]);
-          }).then(({ error } = {}) => {
+          client.from('error_logs').insert([{
+            id: errorEntry.id,
+            error_type: errorEntry.type,
+            message: errorEntry.message,
+            stack_trace: errorEntry.stackTrace,
+            device_id: errorEntry.deviceId,
+            created_at: errorEntry.time
+          }]).then(({ error }) => {
             if (error) console.warn("Could not send error telemetry to Supabase:", error.message);
           }).catch(() => {});
         }

@@ -136,12 +136,16 @@
 
     // ---------- EXTERNAL DOCUMENTS (photos/files uploaded manually) ----------
     window.uploadGenericFileToSupabase = async function (file, folder) {
-      const compressed = await window.compressImageFile(file);
+      if (!file || file.size > 20 * 1024 * 1024) throw new Error('ไฟล์ต้องมีขนาดไม่เกิน 20 MB');
+      const allowed = ['image/jpeg','image/png','image/webp','application/pdf'];
+      if (!allowed.includes(file.type)) throw new Error('อนุญาตเฉพาะ JPG/PNG/WebP/PDF');
+      const compressed = file.type === 'application/pdf' ? file : await window.compressImageFile(file);
       const ext = compressed.name.split('.').pop();
       const user = (await getSupabaseClient().auth.getUser()).data?.user;
       if (!user) throw new Error('ต้องมีเจ้าของร้าน (owner) login เชื่อมต่อคลาวด์ในเครื่องนี้ก่อนถึงจะอัปโหลดเอกสารได้');
       const safeFolder = String(folder || 'external-docs').replace(/[^a-zA-Z0-9_-]/g, '-');
-      const path = `${user.id}/${safeFolder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
+      const path = `${storeId}/${safeFolder}/${crypto.randomUUID()}.${ext}`;
       const { error: uploadError } = await getSupabaseClient().storage
         .from('documents')
         .upload(path, compressed, { upsert: false, contentType: compressed.type || undefined });

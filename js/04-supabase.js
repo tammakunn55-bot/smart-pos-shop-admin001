@@ -1,6 +1,6 @@
 /* js/supabase-integration.js */
 // ==========================================
-// SUPABASE INTEGRATION (Supabase Auth Session + Owner-isolated Cloud Data)
+// SUPABASE INTEGRATION (With Conflict Resolution, Force Sync & Granular Tables)
 // ==========================================
 // Requires the Supabase JS client loaded first via CDN in index.html:
 //   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>
@@ -20,18 +20,59 @@ function getAccountScopedKey(base, accountId = null) {
   const id = String(accountId || localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
   return id ? `${base}::${id}` : base;
 }
+function readFirstLocalStorage(keys) {
+  for (const key of keys) {
+    try {
+      const value = String(localStorage.getItem(key) || '').trim();
+      if (value) return value;
+    } catch (_) {}
+  }
+  return '';
+}
 function getConfiguredSupabaseUrl(accountId = null) {
-  const scoped = localStorage.getItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId));
-  return scoped || '';
+  const scopedKey = getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId);
+  const scoped = readFirstLocalStorage([scopedKey]);
+  if (scoped) return scoped.replace(/\/$/, '');
+  // Backward compatibility: older Smart POS builds stored the same public
+  // project config without an account suffix. Reuse it and migrate it to the
+  // current account namespace instead of falsely reporting "cloud disconnected".
+  const legacy = readFirstLocalStorage([
+    SUPABASE_URL_STORAGE_KEY,
+    'POS_SUPABASE_URL',
+    'SUPABASE_URL',
+    'supabase_url'
+  ]);
+  if (legacy && accountId) {
+    try { localStorage.setItem(scopedKey, legacy.replace(/\/$/, '')); } catch (_) {}
+  }
+  return legacy.replace(/\/$/, '');
 }
 function getConfiguredSupabaseAnonKey(accountId = null) {
-  const scoped = localStorage.getItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId));
-  return scoped || '';
+  const scopedKey = getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId);
+  const scoped = readFirstLocalStorage([scopedKey]);
+  if (scoped) return scoped;
+  const legacy = readFirstLocalStorage([
+    SUPABASE_KEY_STORAGE_KEY,
+    'POS_SUPABASE_ANON_KEY',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_KEY',
+    'supabase_anon_key'
+  ]);
+  if (legacy && accountId) {
+    try { localStorage.setItem(scopedKey, legacy); } catch (_) {}
+  }
+  return legacy;
 }
 function setConfiguredSupabase(url, key, accountId = null) {
-  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), url);
-  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), key);
+  const cleanUrl = String(url || '').trim().replace(/\/$/, '');
+  const cleanKey = String(key || '').trim();
+  localStorage.setItem(getAccountScopedKey(SUPABASE_URL_STORAGE_KEY, accountId), cleanUrl);
+  localStorage.setItem(getAccountScopedKey(SUPABASE_KEY_STORAGE_KEY, accountId), cleanKey);
 }
+
+// v2.2: one Supabase project/database is one store.
+function getStoreFingerprint(url) { try { return new URL(String(url||'')).hostname.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,40); } catch(e) { return ''; } }
+function getCurrentStoreFingerprint() { return String(localStorage.getItem('POS_STORE_FINGERPRINT')||'').trim(); }
 
 // Supabase Auth password is NEVER persisted locally.
 // Reconnection relies on the normal Supabase Auth session; if the session expires,
@@ -39,95 +80,110 @@ function setConfiguredSupabase(url, key, accountId = null) {
 
 window.completeFirstTimeSetup = async function () {
   const storeName = document.getElementById('setup-store-name')?.value.trim() || '';
-  const url = document.getElementById('setup-supabase-url')?.value.trim().replace(/\/$/, '') || '';
-  const key = document.getElementById('setup-supabase-key')?.value.trim() || '';
-  const email = document.getElementById('setup-owner-email')?.value.trim().toLowerCase() || '';
+  const ownerEmail = document.getElementById('setup-owner-email')?.value.trim().toLowerCase() || '';
+  const urlInput = document.getElementById('setup-supabase-url')?.value.trim() || '';
+  const keyInput = document.getElementById('setup-supabase-key')?.value.trim() || '';
   const password = document.getElementById('setup-user-password')?.value || '';
   const passwordConfirm = document.getElementById('setup-user-password-confirm')?.value || '';
 
   if (!storeName) return alert('กรุณาระบุชื่อร้าน');
-  if (!/^https:\/\/.+\.supabase\.co$/.test(url)) return alert('Supabase Project URL ไม่ถูกต้อง');
-  if (!key || /service_role|sb_secret/i.test(key)) return alert('กรุณาใช้ anon / Publishable key เท่านั้น ห้ามใช้ service_role/secret key');
-  if (!/^\S+@\S+\.\S+$/.test(email)) return alert('กรุณากรอกอีเมลเจ้าของร้านที่ถูกต้อง');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) return alert('กรุณากรอกอีเมลเจ้าของร้านให้ถูกต้อง');
   if (password.length < 8) return alert('รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร');
   if (password !== passwordConfirm) return alert('รหัสผ่านยืนยันไม่ตรงกัน');
 
+  let client = null;
   try {
-    if (!window.supabase?.createClient) throw new Error('ไม่พบ Supabase JS client');
-    const client = window.supabase.createClient(url, key, {
+    const url = String(urlInput || getConfiguredSupabaseUrl() || SUPABASE_URL_DEFAULT || '').trim().replace(/\/$/, '');
+    const key = String(keyInput || getConfiguredSupabaseAnonKey() || SUPABASE_ANON_KEY_DEFAULT || '').trim();
+
+    if (!url || !key) return alert('กรุณากรอก Supabase Project URL และ Publishable/anon key');
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return alert('Supabase Project URL ไม่ถูกต้อง');
+    if (/service_role|sb_secret|postgres(ql)?:\/\/|password\s*=/i.test(key)) return alert('ค่าที่กรอกมีลักษณะเป็น Secret/Database credential ซึ่งห้ามใช้ใน Frontend');
+
+    // Runtime-only configuration: never written to source files or GitHub.
+    setConfiguredSupabase(url, key, ownerEmail);
+    localStorage.setItem('POS_ACCOUNT_ID', ownerEmail);
+
+    client = window.supabase.createClient(url, key, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
+    _supabaseClient = client;
 
-    let authResult = await client.auth.signUp({
-      email,
+    const authResult = await client.auth.signUp({
+      email: ownerEmail,
       password,
-      options: { data: { display_name: storeName + ' เจ้าของร้าน', store_name: storeName } }
+      options: {
+        data: { username: ownerEmail, full_name: storeName + ' เจ้าของร้าน', store_name: storeName }
+      }
     });
 
-    if (authResult.error && /already registered|already exists|user already registered/i.test(authResult.error.message || '')) {
-      authResult = await client.auth.signInWithPassword({ email, password });
-    }
-    if (authResult.error) throw new Error('Supabase Auth: ' + authResult.error.message);
-    if (!authResult.data?.user) throw new Error('Supabase ไม่ส่งข้อมูลผู้ใช้กลับมา');
-    if (!authResult.data?.session) {
-      throw new Error('สร้างบัญชีแล้ว แต่ Supabase ยังไม่เปิด Session อัตโนมัติ — กรุณาปิด Email confirmation ใน Authentication > Providers > Email แล้วลองอีกครั้ง');
+    if (authResult.error) {
+      // If the account already exists, sign in rather than creating a duplicate.
+      const signIn = await client.auth.signInWithPassword({ email: ownerEmail, password });
+      if (signIn.error || !signIn.data?.user) {
+        throw new Error('สร้าง/เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (authResult.error.message || signIn.error?.message || 'ไม่ทราบสาเหตุ'));
+      }
+      authResult.data = signIn.data;
     }
 
-    const accountCode = 'owner-' + authResult.data.user.id.slice(0, 8);
-    const { data: account, error: accountErr } = await client.rpc('create_pos_account', {
-      p_store_name: storeName,
-      p_account_code: accountCode
-    });
-    if (accountErr) throw new Error('สร้างบัญชีร้านไม่สำเร็จ: ' + accountErr.message);
-    if (!account) throw new Error('Supabase ไม่คืนข้อมูลบัญชีร้าน');
+    const user = authResult.data?.user;
+    const session = authResult.data?.session;
 
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + ownerEmail, ownerEmail);
+    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', ownerEmail);
+    if (user?.id) {
+      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + ownerEmail, user.id);
+      localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', user.id);
+    }
+
+    if (!user) throw new Error('Supabase ไม่คืนข้อมูลผู้ใช้');
+
+    // With email confirmation enabled Supabase may return a user without a session.
+    // In that case store the pending store name and finish store creation after verification/login.
+    let storeId = null;
+    if (session) {
+      const { data, error } = await client.rpc('create_store', { p_name: storeName, p_code: null });
+      if (error) throw new Error('สร้างร้านบน Supabase ไม่สำเร็จ: ' + error.message);
+      storeId = data;
+    } else {
+      localStorage.setItem('PENDING_STORE_NAME', storeName);
+      localStorage.setItem('PENDING_OWNER_EMAIL', ownerEmail);
+      alert('สร้างบัญชี Supabase แล้ว กรุณายืนยันอีเมลก่อน แล้วกลับมาเข้าสู่ระบบอีกครั้ง ระบบจะสร้างร้านให้อัตโนมัติ');
+    }
+
+    const accountId = ownerEmail;
     const freshDb = JSON.parse(JSON.stringify(DB_DEFAULT));
     freshDb.storeName = storeName;
-    const salt = generatePinSalt();
-    const passwordHash = await hashPassword(password, salt);
-    const localId = email;
+    freshDb.storeId = storeId || '';
     freshDb.users = [{
-      id: localId,
+      id: accountId,
+      authUserId: user.id,
       name: storeName + ' เจ้าของร้าน',
       role: 'owner',
-      passwordHash,
-      passwordSalt: salt,
+      email: ownerEmail,
       createdAt: new Date().toISOString()
     }];
 
     await localforage.removeItem(DB_KEY_BASE);
-    await localforage.setItem(getAccountDbKey(localId), freshDb);
-    await localforage.setItem('POS_ACCOUNT_ID', localId);
+    await localforage.setItem(getAccountDbKey(accountId), freshDb);
+    await localforage.setItem('POS_ACCOUNT_ID', accountId);
     await localforage.setItem('POS_FIRST_SETUP_DONE', true);
-    localStorage.setItem('POS_ACCOUNT_ID', localId);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + localId, email);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + localId, authResult.data.user.id);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', authResult.data.user.id);
-    setConfiguredSupabase(url, key, localId);
-    localStorage.removeItem('PENDING_STORE_NAME');
+
+    localStorage.setItem('POS_ACCOUNT_ID', accountId);
+    if (storeId) localStorage.setItem('POS_STORE_ID', storeId);
+    setConfiguredSupabase(url, key, accountId);
     localStorage.removeItem(LAST_SYNCED_KEY);
-    _supabaseClient = client;
-    if (typeof window.updateSupabaseConnectionStatus === 'function') window.updateSupabaseConnectionStatus(true, authResult.data.user);
 
-    // สร้าง state เริ่มต้นบนคลาวด์ทันทีเพื่อให้เครื่องอื่นเชื่อมร้านนี้ได้
-    const stateForRemote = JSON.parse(JSON.stringify(freshDb));
-    const nowIso = new Date().toISOString();
-    const { error: stateErr } = await client.from('pos_state').upsert({
-      id: POS_STATE_ROW_ID,
-      owner_id: authResult.data.user.id,
-      updated_by: authResult.data.user.id,
-      data: stateForRemote,
-      updated_at: nowIso
-    }, { onConflict: 'id' });
-    if (stateErr) throw new Error('สร้างข้อมูลร้านเริ่มต้นไม่สำเร็จ: ' + stateErr.message);
-    localStorage.setItem(LAST_SYNCED_KEY, nowIso);
-
-    alert('สร้างร้านและบัญชีเจ้าของสำเร็จแล้ว');
-    location.reload();
+    if (session && typeof window.finishFirstTimeSetupInMemory === 'function') {
+      await window.finishFirstTimeSetupInMemory(accountId, ownerEmail);
+      alert('สร้างร้าน "' + storeName + '" สำเร็จและเชื่อมต่อ Supabase แล้ว');
+    } else if (typeof window.showLogin === 'function') {
+      window.showLogin();
+    }
   } catch (err) {
     console.error('First setup failed:', err);
-    alert('สร้างร้านไม่สำเร็จ: ' + (err.message || err));
+    try { await client?.auth?.signOut?.(); } catch (_) {}
+    alert('สร้างร้านไม่สำเร็จ: ' + (err?.message || err));
   }
 };
 
@@ -135,84 +191,38 @@ window.completeFirstTimeSetup = async function () {
 // สร้าง DB_DEFAULT ว่างๆ ทับ — ยืนยันตัวด้วยอีเมล/รหัสผ่านของ "เจ้าของร้าน" (คนเดียวที่ผูก
 // Supabase Auth ไว้) หนึ่งครั้ง ดึง pos_state ฉบับเต็มมาเก็บเป็นฐานข้อมูลของเครื่องนี้ แล้วให้
 // เครื่องนี้ล็อกอินด้วย PIN ของพนักงานแต่ละคนตามปกติในครั้งถัดๆ ไป (เหมือนเครื่องแรก)
-window.completeJoinExistingAccount = async function () {
-  const errEl = document.getElementById('setup-join-error');
-  const showErr = (msg) => { if (errEl) { errEl.textContent = '❌ ' + msg; errEl.classList.remove('hidden'); } };
-  if (errEl) errEl.classList.add('hidden');
-
-  const url = (document.getElementById('setup-join-url')?.value || '').trim().replace(/\/$/, '');
-  const key = (document.getElementById('setup-join-key')?.value || '').trim();
-  const email = (document.getElementById('setup-join-email')?.value || '').trim().toLowerCase();
-  const password = document.getElementById('setup-join-password')?.value || '';
-
-  if (!url || !key || !email || !password) return showErr('กรุณากรอกข้อมูลให้ครบทุกช่อง');
-  if (!/^https:\/\/.+\.supabase\.co$/.test(url)) return showErr('รูปแบบ Project URL ควรเป็น https://xxxxx.supabase.co');
-  if (!/^\S+@\S+\.\S+$/.test(email)) return showErr('รูปแบบอีเมลไม่ถูกต้อง');
-  if (/service_role|sb_secret/i.test(key)) return showErr('ห้ามใช้ service_role/secret key ให้ใช้ anon public key เท่านั้น');
-  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return showErr('ไม่พบไลบรารี Supabase ในหน้านี้');
-
-  try {
-    // ใช้ client ชั่วคราวแยกต่างหาก ยังไม่บันทึกเป็นค่าเชื่อมต่อของเครื่องจนกว่าจะยืนยันสำเร็จ
-    const tempClient = window.supabase.createClient(url, key, { auth: { persistSession: false } });
-
-    const signIn = await tempClient.auth.signInWithPassword({ email, password });
-    if (signIn.error || !signIn.data?.session) {
-      return showErr('เข้าสู่ระบบ Supabase ไม่สำเร็จ: ' + (signIn.error?.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'));
-    }
-    const authUser = signIn.data.user;
-
-    const { data: row, error: fetchErr } = await tempClient
-      .from('pos_state')
-      .select('data, updated_at, owner_id')
-      .eq('id', 'main')
-      .maybeSingle();
-
-    if (fetchErr) return showErr('ดึงข้อมูลร้านไม่สำเร็จ: ' + fetchErr.message);
-    if (!row || !row.data) return showErr('ยังไม่พบข้อมูลร้านบนคลาวด์ กรุณาซิงค์ข้อมูลจากเครื่องหลักอย่างน้อย 1 ครั้งก่อน แล้วค่อยเชื่อมต่อเครื่องนี้');
-    if (row.owner_id && authUser?.id && row.owner_id !== authUser.id) {
-      return showErr('ข้อมูลบน Supabase นี้เป็นของบัญชีอื่น ไม่ตรงกับอีเมลที่ยืนยัน');
-    }
-
-    const pulledDb = row.data;
-    const ownerUser = (pulledDb.users || []).find(u => u.role === 'owner') || (pulledDb.users || [])[0];
-    const accountId = String(ownerUser?.id || email.split('@')[0]).trim().toLowerCase();
-    if (!ownerUser) {
-      return showErr('ข้อมูลร้านที่ดึงมาไม่มีบัญชีผู้ใช้ ไม่สามารถตั้งค่าเครื่องนี้ได้ กรุณาตรวจสอบข้อมูลบนเครื่องหลัก');
-    }
-
-    // เก็บฐานข้อมูลที่ดึงมาไว้ในพื้นที่ของ accountId เดียวกับที่เครื่องหลักใช้ และล้าง legacy key เดิม
-    await localforage.removeItem(DB_KEY_BASE);
-    await localforage.setItem(getAccountDbKey(accountId), pulledDb);
-    await localforage.setItem('POS_ACCOUNT_ID', accountId);
-    await localforage.setItem('POS_FIRST_SETUP_DONE', true);
-
-    localStorage.setItem('POS_ACCOUNT_ID', accountId);
-    setConfiguredSupabase(url, key, accountId);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, email);
-    localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, authUser.id);
-    localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', authUser.id);
-    localStorage.setItem(LAST_SYNCED_KEY, row.updated_at);
-    localStorage.removeItem('PENDING_STORE_NAME');
-    localStorage.removeItem('POS_BOUND_SUPABASE_URL');
-
-    try { await tempClient.auth.signOut(); } catch (e) { /* temp client, session wasn't persisted anyway */ }
-
-    alert('เชื่อมต่อร้าน "' + (pulledDb.storeName || '') + '" สำเร็จ! ล็อกอินด้วย User ID/รหัสผ่านของพนักงานแต่ละคนได้ตามปกติ');
-    location.reload();
-  } catch (err) {
-    console.error('Join existing account failed:', err);
-    showErr(err.message || String(err));
-  }
-};
-
-window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEmail = null) {
+window.ensureSupabaseAuthForCurrentAccount = async function(password = '', suppliedEmail = null) {
   try {
     const accountId = String(localStorage.getItem('POS_ACCOUNT_ID') || '').trim().toLowerCase();
-    if (!accountId || !password) return { ok: false, reason: 'missing_credentials' };
+    if (!accountId) return { ok: false, reason: 'missing_account' };
+    const client = getSupabaseClient();
+    if (!client) return { ok: false, reason: 'cloud_not_configured' };
+
+    // IMPORTANT: if the owner is already authenticated, reuse the persisted
+    // Supabase session. Never ask for the password or sign in again on every
+    // POS start/action. Supabase Auth refreshes the session automatically.
+    const existing = await client.auth.getSession();
+    const existingUser = existing?.data?.session?.user || null;
+    if (existingUser?.id) {
+      const meta = existingUser.user_metadata || {};
+      const rememberedAuthId = localStorage.getItem('POS_SUPABASE_AUTH_USER_ID::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_USER_ID') || '';
+      const sameAccount = !meta.username || String(meta.username).toLowerCase() === accountId;
+      const sameRememberedUser = !rememberedAuthId || String(rememberedAuthId) === String(existingUser.id);
+      if (sameAccount && sameRememberedUser) {
+        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, existingUser.id);
+        localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', existingUser.id);
+        if (existingUser.email) {
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, existingUser.email);
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', existingUser.email);
+        }
+        return { ok: true, user: existingUser, session: existing.data.session, reusedSession: true };
+      }
+    }
+
+    // No usable remembered session: only now is a password required.
+    if (!password) return { ok: false, reason: 'missing_credentials' };
     const email = String(suppliedEmail || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL::' + accountId) || localStorage.getItem('POS_SUPABASE_AUTH_EMAIL') || '').trim().toLowerCase();
     if (!email) return { ok: false, reason: 'missing_email' };
-    const client = getSupabaseClient();
 
     let result = await client.auth.signInWithPassword({ email, password });
     if (!result.error && result.data?.session) {
@@ -225,7 +235,6 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEm
       localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
       localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, result.data.user.id);
       localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', result.data.user.id);
-      if (typeof window.updateSupabaseConnectionStatus === 'function') window.updateSupabaseConnectionStatus(true, result.data.user);
       return { ok: true, user: result.data.user, session: result.data.session };
     }
 
@@ -249,6 +258,115 @@ window.ensureSupabaseAuthForCurrentAccount = async function(password, suppliedEm
     return { ok: false, reason: e.message || String(e) };
   }
 };
+
+
+// ============================================================
+// REMEMBERED SUPABASE SESSION
+// Never stores a password. Supabase persists/refreshes the Auth
+// session in the browser. On reload, restore the matching local
+// POS user from the active Auth session.
+// ============================================================
+window.restoreRememberedSupabaseLogin = async function () {
+  try {
+    const ready = await window.ensureSupabaseClientReady({ requireSession:false });
+    if (!ready.ok || !ready.client) return { ok:false, reason:ready.reason || 'cloud_not_configured' };
+    const client = ready.client;
+    const { data: sessionData, error: sessionError } = await client.auth.getSession();
+    if (sessionError || !sessionData?.session?.user) return { ok:false, reason:'no_session' };
+
+    const authUser = sessionData.session.user;
+    const rememberedId = String(localStorage.getItem('POS_LAST_LOGIN_USER_ID') || '').trim().toLowerCase();
+    const users = Array.isArray(window.db?.users) ? window.db.users : [];
+    let localUser = rememberedId
+      ? users.find(u => String(u.id || '').toLowerCase() === rememberedId)
+      : null;
+
+    if (!localUser) {
+      localUser = users.find(u =>
+        (u.supabaseAuthUserId && String(u.supabaseAuthUserId) === String(authUser.id)) ||
+        (u.email && String(u.email).toLowerCase() === String(authUser.email || '').toLowerCase())
+      );
+    }
+    if (!localUser) return { ok:false, reason:'session_user_not_found' };
+
+    if (localUser.supabaseAuthUserId &&
+        String(localUser.supabaseAuthUserId) !== String(authUser.id)) {
+      return { ok:false, reason:'session_user_mismatch' };
+    }
+
+    const store = typeof window.refreshStoreContext === 'function'
+      ? await window.refreshStoreContext()
+      : null;
+    if (!store) return { ok:false, reason:'store_context_unavailable' };
+
+    return {
+      ok:true,
+      user:localUser,
+      store,
+      session:sessionData.session
+    };
+  } catch (e) {
+    console.warn('[Auth] remembered session restore failed:', e);
+    return { ok:false, reason:e?.message || 'restore_failed' };
+  }
+};
+
+window.refreshStoreContext = async function () {
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client.rpc('get_my_store');
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.store_id) return null;
+    localStorage.setItem('POS_STORE_ID', row.store_id);
+    localStorage.setItem('POS_STORE_NAME', row.store_name || db.storeName || '');
+    localStorage.setItem('POS_STORE_ROLE', row.role || 'staff');
+    return row;
+  } catch (e) {
+    console.warn('Store context unavailable:', e);
+    return null;
+  }
+};
+
+window.ensureSupabaseAuthForMember = async function(email, password) {
+  const client = getSupabaseClient();
+  if (!email || !password) return { ok:false, reason:'missing_member_credentials' };
+  const result = await client.auth.signInWithPassword({ email, password });
+  if (result.error || !result.data?.session) return { ok:false, reason: result.error?.message || 'member_auth_failed' };
+  const store = await window.refreshStoreContext();
+  if (!store) {
+    await client.auth.signOut();
+    return { ok:false, reason:'บัญชีสมาชิกยังไม่ได้รับสิทธิ์เข้าร้านนี้' };
+  }
+  return { ok:true, user:result.data.user, session:result.data.session, store };
+};
+
+window.provisionStoreMemberAuth = async function(email, password, role='staff') {
+  if (!getConfiguredSupabaseUrl() || !getConfiguredSupabaseAnonKey()) return { ok:false, reason:'cloud_not_configured' };
+  if (!email || !password) throw new Error('สมาชิก Cloud ต้องมีอีเมลและรหัสผ่านอย่างน้อย 8 ตัวอักษร');
+  const ownerClient = getSupabaseClient();
+  const { data: current } = await ownerClient.auth.getUser();
+  if (!current?.user) throw new Error('ต้องเข้าสู่ระบบเจ้าของร้านก่อนเพิ่มสมาชิก');
+  const ownerSession = (await ownerClient.auth.getSession()).data?.session;
+  const temp = window.supabase.createClient(getConfiguredSupabaseUrl(), getConfiguredSupabaseAnonKey(), { auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false} });
+  const signUp = await temp.auth.signUp({ email, password, options:{ data:{ display_name: email.split('@')[0] } } });
+  if (signUp.error) throw signUp.error;
+  const memberId = signUp.data?.user?.id;
+  if (!memberId) throw new Error('Supabase ไม่คืนรหัสสมาชิก');
+  const { error: addErr } = await ownerClient.rpc('add_store_member', { p_user_id: memberId, p_role: role === 'manager' ? 'manager' : 'staff' });
+  if (addErr) throw addErr;
+  // The temporary client never persists the member session; the owner session remains intact.
+  return { ok:true, userId:memberId, email };
+};
+
+window.processSaleAtomicOnline = async function(payload) {
+  const client = getSupabaseClient();
+  const { data, error } = await client.rpc('process_sale_atomic', { p_payload: payload });
+  if (error) throw error;
+  return data;
+};
+
+
 
 window.loadCodeConfigIntoForm = function () {
   ['customer', 'supplier', 'category'].forEach(type => {
@@ -288,78 +406,135 @@ window.saveCodeConfig = function () {
 };
 
 let _supabaseClient = null;
+let _supabaseAuthSubscription = null;
+let _supabaseBootPromise = null;
+
+function getActiveAccountId() {
+  return String(
+    localStorage.getItem('POS_ACCOUNT_ID') ||
+    localStorage.getItem('POS_STORE_ID') ||
+    ''
+  ).trim();
+}
+
+function resolveSupabaseConfig() {
+  const accountId = getActiveAccountId();
+  let url = getConfiguredSupabaseUrl(accountId);
+  let key = getConfiguredSupabaseAnonKey(accountId);
+
+  // Accept config already exposed by the host page/app shell, but never a secret key.
+  if ((!url || !key) && window.SMARTPOS_SUPABASE_CONFIG) {
+    url = url || String(window.SMARTPOS_SUPABASE_CONFIG.url || '').trim();
+    key = key || String(window.SMARTPOS_SUPABASE_CONFIG.anonKey || '').trim();
+  }
+  if ((!url || !key) && window.__SMARTPOS_SUPABASE__) {
+    url = url || String(window.__SMARTPOS_SUPABASE__.url || '').trim();
+    key = key || String(window.__SMARTPOS_SUPABASE__.anonKey || '').trim();
+  }
+
+  if (!url || !key) return null;
+  if (/service_role|sb_secret/i.test(key)) return null;
+  if (!/^https:\/\/[^\s/]+\.supabase\.co(?:\/.*)?$/i.test(url)) return null;
+  return { url: url.replace(/\/$/, ''), key, accountId };
+}
+
 function getSupabaseClient() {
   if (_supabaseClient) return _supabaseClient;
-  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
-    if (typeof window.showAlert === 'function') {
-      window.showAlert("เชื่อมต่อ Supabase ไม่ได้", "ไลบรารี Supabase ยังโหลดไม่สำเร็จ", true);
+  const cfg = resolveSupabaseConfig();
+  if (!cfg) return null;
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return null;
+
+  _supabaseClient = window.supabase.createClient(cfg.url, cfg.key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      flowType: 'pkce'
     }
-    throw new Error("Supabase library not loaded");
+  });
+
+  if (!_supabaseAuthSubscription) {
+    const result = _supabaseClient.auth.onAuthStateChange((event, session) => {
+      window.POS_SUPABASE_SESSION = session || null;
+      window.POS_SUPABASE_AUTH_STATE = event;
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+        if (session?.user?.id) {
+          const accountId = getActiveAccountId();
+          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', session.user.id);
+          if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + accountId, session.user.id);
+          if (session.user.email) {
+            localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', session.user.email);
+            if (accountId) localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + accountId, session.user.email);
+          }
+        }
+      }
+      if (event === 'SIGNED_OUT') {
+        window.POS_SUPABASE_SESSION = null;
+      }
+      try { window.dispatchEvent(new CustomEvent('smartpos:supabase-auth', { detail: { event, session } })); } catch (_) {}
+    });
+    _supabaseAuthSubscription = result?.data?.subscription || null;
   }
-  _supabaseClient = window.supabase.createClient(getConfiguredSupabaseUrl(), getConfiguredSupabaseAnonKey(), { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   return _supabaseClient;
 }
 window.getSupabaseClient = getSupabaseClient;
 
-window.updateSupabaseConnectionStatus = async function (connected = null, user = null) {
-  try {
-    const statusEl = document.getElementById('supabase-connection-status');
-    const projectEl = document.getElementById('supabase-connection-project');
-    const url = getConfiguredSupabaseUrl();
-    if (projectEl) projectEl.textContent = url ? ('Project: ' + url) : 'ยังไม่ได้ตั้งค่า Project URL';
-    if (connected === null) {
-      const client = getSupabaseClient();
-      const result = await client.auth.getSession();
-      connected = !!result.data?.session;
-      user = result.data?.session?.user || null;
+window.ensureSupabaseClientReady = async function (options = {}) {
+  const requireSession = options.requireSession !== false;
+  if (_supabaseBootPromise) return _supabaseBootPromise;
+  _supabaseBootPromise = (async () => {
+    const client = getSupabaseClient();
+    if (!client) return { ok:false, reason:'cloud_not_configured', client:null, session:null };
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error) return { ok:false, reason:error.message || 'session_check_failed', client, session:null };
+      const session = data?.session || null;
+      window.POS_SUPABASE_SESSION = session;
+      if (requireSession && !session) return { ok:false, reason:'not_authenticated', client, session:null };
+      return { ok:true, client, session };
+    } catch (e) {
+      return { ok:false, reason:e?.message || 'client_not_ready', client, session:null };
+    } finally {
+      _supabaseBootPromise = null;
     }
-    if (statusEl) {
-      if (connected) {
-        statusEl.className = 'text-[10px] text-emerald-700 font-bold leading-relaxed';
-        statusEl.textContent = '🟢 เชื่อมต่อแล้ว — Supabase Session กำลังทำงานอัตโนมัติ' + (user?.email ? ` (${user.email})` : '');
-      } else {
-        statusEl.className = 'text-[10px] text-amber-700 font-bold leading-relaxed';
-        statusEl.textContent = '🟡 ยังไม่ได้เข้าสู่ระบบ Supabase — ข้อมูลในเครื่องยังคงอยู่ แต่การซิงค์คลาวด์จะหยุดจนกว่าจะเข้าสู่ระบบ';
-      }
-    }
-    return connected;
-  } catch (e) {
-    const statusEl = document.getElementById('supabase-connection-status');
-    if (statusEl) {
-      statusEl.className = 'text-[10px] text-rose-700 font-bold leading-relaxed';
-      statusEl.textContent = '🔴 ตรวจสอบการเชื่อมต่อไม่สำเร็จ: ' + (e.message || e);
-    }
-    return false;
-  }
+  })();
+  return _supabaseBootPromise;
 };
 
-window.logoutSupabaseSession = function () {
-  const doLogout = async () => {
-    try {
-      const client = getSupabaseClient();
-      await client.auth.signOut();
-      _supabaseClient = null;
-      localStorage.removeItem('POS_SUPABASE_AUTH_USER_ID');
-      localStorage.removeItem('pos_last_synced_at');
-      try { await window.refreshPrivateStorageUrls?.(true); } catch (e) {}
-      const lock = document.getElementById('lock-screen');
-      if (lock) {
-        lock.style.display = 'flex';
-        lock.style.opacity = '1';
-      }
-      if (typeof window.updateSupabaseConnectionStatus === 'function') window.updateSupabaseConnectionStatus(false, null);
-      if (typeof window.showToast === 'function') window.showToast('ออกจากระบบ Supabase แล้ว');
-      location.reload();
-    } catch (e) {
-      if (typeof window.showAlert === 'function') window.showAlert('ออกจากระบบไม่สำเร็จ', e.message || String(e), true);
-    }
-  };
-  if (typeof window.showCustomConfirm === 'function') {
-    window.showCustomConfirm('ออกจากระบบ Supabase?', 'Session จะถูกยกเลิกและต้องเข้าสู่ระบบอีกครั้งเมื่อต้องการใช้งานคลาวด์', doLogout);
-  } else if (confirm('ออกจากระบบ Supabase?')) {
-    doLogout();
-  }
+window.getSupabaseSession = async function () {
+  const client = getSupabaseClient();
+  if (!client) return null;
+  try {
+    const { data } = await client.auth.getSession();
+    window.POS_SUPABASE_SESSION = data?.session || null;
+    return data?.session || null;
+  } catch (_) { return null; }
 };
+
+window.refreshSupabaseSession = async function () {
+  const client = getSupabaseClient();
+  if (!client) return { ok:false, reason:'cloud_not_configured' };
+  try {
+    const { data, error } = await client.auth.refreshSession();
+    if (error) return { ok:false, reason:error.message || 'refresh_failed' };
+    window.POS_SUPABASE_SESSION = data?.session || null;
+    return { ok:true, session:data?.session || null };
+  } catch (e) { return { ok:false, reason:e?.message || 'refresh_failed' }; }
+};
+
+// Boot once per page. This does NOT sign in, ask for a password, or contact a
+// different project. It only restores the persisted Supabase session for the
+// already configured store.
+window.initSupabaseAuth = async function () {
+  return window.ensureSupabaseClientReady({ requireSession:false });
+};
+
+// Initialize after the Supabase CDN is available and after localStorage is ready.
+(function bootSupabaseAuth() {
+  const run = () => { try { window.initSupabaseAuth(); } catch (_) {} };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once:true });
+  else run();
+})();
 
 // ------------------------------------------
 // DECOUPLED SYNC & GRANULAR RELATIONAL TABLE SUPPORT
@@ -605,26 +780,45 @@ window.compressImageFile = function (file, maxDim = 1600, quality = 0.82) {
 };
 
 window.uploadProductImageToSupabase = async function (file, productId) {
-  if (!file) return null;
+  if (!file) throw new Error('ไม่พบไฟล์รูป');
+  if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '') || file.size > 5 * 1024 * 1024) {
+    throw new Error('รูปสินค้าต้องเป็น JPG/PNG/WebP และมีขนาดไม่เกิน 5 MB');
+  }
+
+  // IMPORTANT: getSupabaseClient() intentionally returns null when the current
+  // account has no saved cloud configuration. Never call .auth/.storage on null.
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูลร้านบนคลาวด์สำหรับบัญชีนี้ กรุณาเข้าสู่ระบบ/เชื่อมต่อร้านก่อนนำเข้ารูป');
+  }
+
   try {
     const compressed = await window.compressImageFile(file);
-    const ext = compressed.name.split('.').pop();
-    const user = (await getSupabaseClient().auth.getUser()).data?.user;
-    if (!user) throw new Error('ต้องมีเจ้าของร้าน (owner) login เชื่อมต่อคลาวด์ในเครื่องนี้ก่อนถึงจะอัปโหลดรูปได้');
-    const path = `${user.id}/products/${productId}-${Date.now()}.${ext}`;
+    const ext = (compressed.name.split('.').pop() || 'jpg').toLowerCase();
+    const { data: authData, error: authError } = await client.auth.getUser();
+    if (authError) throw new Error('ตรวจสอบผู้ใช้ Supabase ไม่สำเร็จ: ' + authError.message);
+    const user = authData?.user;
+    if (!user) throw new Error('ไม่มี Supabase Session ที่ใช้งานอยู่ กรุณาเข้าสู่ระบบร้านอีกครั้งก่อนนำเข้ารูป');
 
-    const { error: uploadError } = await getSupabaseClient().storage
+    const storeId = localStorage.getItem('POS_STORE_ID') || user.id;
+    const safeProductId = String(productId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!safeProductId) throw new Error('ไม่พบรหัสสินค้า');
+    const randomId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    const path = `${storeId}/products/${safeProductId}-${randomId}.${ext}`;
+
+    const { error: uploadError } = await client.storage
       .from('product-images')
       .upload(path, compressed, { upsert: false, contentType: compressed.type || undefined });
     if (uploadError) throw uploadError;
 
-    const { data, error } = await getSupabaseClient().storage.from('product-images').createSignedUrl(path, 3600);
+    // Signed URL is only for display; path is the durable value saved to the product.
+    const { data, error } = await client.storage.from('product-images').createSignedUrl(path, 3600);
     if (error) throw error;
-    return { url: data.signedUrl, path };
+    return { url: data?.signedUrl || '', path };
   } catch (err) {
-    console.error("Image upload error:", err);
-    showAlert("อัปโหลดรูปไม่สำเร็จ", "เกิดข้อผิดพลาด: " + err.message, true);
-    return null;
+    console.error('Image upload error:', err);
+    if (typeof showAlert === 'function') showAlert('อัปโหลดรูปไม่สำเร็จ', 'เกิดข้อผิดพลาด: ' + (err.message || err), true);
+    throw err;
   }
 };
 
@@ -656,66 +850,53 @@ window.handleProductImageUpload = async function (event) {
 };
 
 // ==========================================
+// PRODUCT IMAGE CACHE
+// เก็บ Blob ตาม storage path ถาวร; Signed URL ใช้เป็นเพียงช่องทางดาวน์โหลด
+// ==========================================
+const PRODUCT_IMAGE_CACHE_NAME='smartpos-product-images-v1';
+function productImageCacheKey(path){const store=String(localStorage.getItem('POS_STORE_ID')||'local').trim().toLowerCase();return `https://smartpos.local/cache/${encodeURIComponent(store)}/${encodeURIComponent(String(path||''))}`;}
+window.cacheProductImage=async function(path,signedUrl){try{if(!path||!signedUrl||!('caches'in window))return false;const r=await fetch(signedUrl,{cache:'no-store'});if(!r.ok)return false;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME);await c.put(productImageCacheKey(path),new Response(await r.blob(),{headers:{'Content-Type':r.headers.get('Content-Type')||'image/jpeg'}}));return true;}catch(_){return false;}};
+window.getCachedProductImage=async function(path){try{if(!path||!('caches'in window))return null;const c=await caches.open(PRODUCT_IMAGE_CACHE_NAME),r=await c.match(productImageCacheKey(path));if(!r)return null;return URL.createObjectURL(await r.blob());}catch(_){return null;}};
+window.clearProductImageCache=async function(){try{if('caches'in window)await caches.delete(PRODUCT_IMAGE_CACHE_NAME);}catch(_){}};
+
+// ==========================================
 // PRIVATE STORAGE URL REFRESH
 // Signed URLs are never persisted as the security credential. Only storage paths are durable.
 // ==========================================
 window.__lastStorageUrlRefreshAt = 0;
-window.refreshPrivateStorageUrls = async function (force = false) {
+window.refreshProductImageUrl = async function (productId, preferCache = true) {
   try {
-    // ร้านที่มีสินค้าเยอะ (หลักพันรายการ) เดิมฟังก์ชันนี้ยิง createSignedUrl ทีละรูปแบบ
-    // sequential await วนลูป — สินค้า 2,000 ชิ้นจะกลายเป็น 2,000 request ต่อครั้งที่เรียก ช้ามาก
-    // และถ้าถูกเรียกทุกครั้งที่สลับหน้าขาย/คลัง (ตามจุดที่เพิ่งเพิ่ม) จะยิ่งหนักเข้าไปอีก
-    // แก้ 2 จุด: (1) ใส่ cooldown ไม่ refresh ถี่กว่าทุก 20 นาทีเว้นแต่ force=true (2) รวมเป็น
-    // batch request เดียวด้วย createSignedUrls (พหูพจน์) แทนการวนทีละรูป
-    if (!force && Date.now() - window.__lastStorageUrlRefreshAt < 20 * 60 * 1000) return;
-
-    const client = getSupabaseClient();
-    if (!client) return;
-    const user = (await client.auth.getUser()).data?.user;
-    if (!user) return;
-
-    window.__lastStorageUrlRefreshAt = Date.now();
-
-    const products = Object.values(db.products || {}).filter(p => p.imageStoragePath && p.imageStoragePath.startsWith(user.id + '/'));
-    const productPaths = products.map(p => p.imageStoragePath);
-    if (productPaths.length > 0) {
-      if (typeof client.storage.from('product-images').createSignedUrls === 'function') {
-        // batch API — 1 request สำหรับทุกรูป (รองรับสูงสุดหลักพันรายการต่อ request ตามข้อจำกัดของ Supabase)
-        const CHUNK = 1000;
-        for (let i = 0; i < productPaths.length; i += CHUNK) {
-          const chunkPaths = productPaths.slice(i, i + CHUNK);
-          const { data, error } = await client.storage.from('product-images').createSignedUrls(chunkPaths, 3600);
-          if (!error && Array.isArray(data)) {
-            data.forEach((r, idx) => {
-              if (r?.signedUrl) {
-                const p = products[i + idx];
-                if (p) p.imageUrl = r.signedUrl;
-              }
-            });
-          }
-        }
-      } else {
-        // Fallback สำหรับ supabase-js เวอร์ชันเก่าที่ไม่มี createSignedUrls (พหูพจน์)
-        for (const p of products) {
-          const { data, error } = await client.storage.from('product-images').createSignedUrl(p.imageStoragePath, 3600);
-          if (!error && data?.signedUrl) p.imageUrl = data.signedUrl;
-        }
+    const p=db?.products?.[productId]; if(!p?.imageStoragePath)return false;
+    if(preferCache&&window.getCachedProductImage){const cached=await window.getCachedProductImage(p.imageStoragePath);if(cached){p.imageUrl=cached;return true;}}
+    const client=getSupabaseClient(); if(!client)return false;
+    const {data,error}=await client.storage.from('product-images').createSignedUrl(p.imageStoragePath,3600);
+    if(error||!data?.signedUrl)return false;
+    p.imageUrl=data.signedUrl;
+    await window.cacheProductImage?.(p.imageStoragePath,data.signedUrl);
+    return true;
+  } catch(e){console.warn('Product image URL refresh failed:',e);return false;}
+};window.refreshPrivateStorageUrls = async function (force = false) {
+  try {
+    const products=Object.values(db.products||{}).filter(p=>p.imageStoragePath);
+    const missing=[];
+    for(const p of products){
+      if(!force&&p.imageUrl)continue;
+      const cached=await window.getCachedProductImage?.(p.imageStoragePath);
+      if(cached)p.imageUrl=cached;else missing.push(p);
+    }
+    if(!missing.length)return true;
+    const client=getSupabaseClient();if(!client)return false;
+    const paths=missing.map(p=>p.imageStoragePath);
+    if(typeof client.storage.from('product-images').createSignedUrls==='function'){
+      for(let i=0;i<paths.length;i+=1000){
+        const chunk=paths.slice(i,i+1000);
+        const {data,error}=await client.storage.from('product-images').createSignedUrls(chunk,3600);
+        if(!error&&Array.isArray(data))await Promise.all(data.map(async(r,j)=>{if(!r?.signedUrl)return;const p=missing[i+j];if(!p)return;p.imageUrl=r.signedUrl;await window.cacheProductImage?.(p.imageStoragePath,r.signedUrl);}));
       }
-    }
-
-    const documents = (db.documents || []).filter(d => d.fileStoragePath && d.fileStoragePath.startsWith(user.id + '/'));
-    for (const d of documents) {
-      const { data, error } = await client.storage.from('documents').createSignedUrl(d.fileStoragePath, 3600);
-      if (!error && data?.signedUrl) d.fileUrl = data.signedUrl;
-    }
-
-    if (typeof window.persist === 'function') window.persist();
-  } catch (e) {
-    console.warn('Private storage URL refresh skipped:', e);
-  }
-};
-
-// ==========================================
+    }else{for(const p of missing)await window.refreshProductImageUrl(p.id,false);}
+    if(window.persist)window.persist();return true;
+  }catch(e){console.warn('Storage URL refresh skipped:',e);return false;}
+};// ==========================================
 // AUTOMATIC FULL-STATE SYNC (With OCC Conflict Check)
 // ==========================================
 const POS_STATE_ROW_ID = 'main';
@@ -738,7 +919,7 @@ window.persist = function (...args) {
 // ==========================================
 // SAFE MERGE ENGINE FOR SYNC CONFLICTS
 // ==========================================
-// Replaces "abort or การเขียนทับข้อมูลทั้งก้อนโดยผู้ใช้" with a
+// Replaces "abort or Force Sync (overwrite the whole remote db)" with a
 // per-record merge, so a conflict between two devices/staff sessions can no
 // longer silently delete data the other side already saved. This matters even
 // more now that staff can legitimately work "offline" on a device that hasn't
@@ -844,7 +1025,7 @@ window.mergeDbStates = function (localDb, remoteDb) {
 // Applies a merged db locally (with a safety backup first), persists it, then
 // pushes it up as the new authoritative remote state. If anything throws at
 // any point, the merge attempt simply fails and the caller falls back to the
-// old manual overwrite flow — the original local db is never left corrupted.
+// old manual Force Sync flow — the original local db is never left corrupted.
 window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
   try {
     const pf = window.__pushFailState || {};
@@ -878,7 +1059,7 @@ window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
       // (ดูได้ที่ 🚨 บันทึกข้อผิดพลาดของระบบ หรือ localStorage key 'pos_last_merge_conflicts')
     }
 
-    const pushed = await window.pushFullStateToSupabaseSafe();
+    const pushed = await window.pushFullStateToSupabaseSafe(true);
     return pushed;
   } catch (err) {
     console.error("[Merge Engine] Failed to apply merged state:", err);
@@ -902,9 +1083,9 @@ window.applyMergedStateAndPush = async function (mergedDb, conflicts) {
 // เด้งซ้ำถี่เกินไปในช่วง cooldown เดียวกัน
 window.__pushFailState = { failCount: 0, cooldownUntil: 0, lastDialogAt: 0, lastBackupAt: 0 };
 
-window.pushFullStateToSupabaseSafe = async function () {
+window.pushFullStateToSupabaseSafe = async function (force = false) {
   const pf = window.__pushFailState;
-  if (Date.now() < pf.cooldownUntil) {
+  if (!force && Date.now() < pf.cooldownUntil) {
     // ยังอยู่ในช่วง cooldown จากความล้มเหลวรอบก่อน ข้ามเงียบๆ ไม่ยิง network ซ้ำ ไม่ log ซ้ำ
     return false;
   }
@@ -952,7 +1133,7 @@ window.pushFullStateToSupabaseSafe = async function () {
     const lastKnownSync = localStorage.getItem(LAST_SYNCED_KEY);
     const nowIso = new Date().toISOString();
 
-    {
+    if (!force) {
       const { data: remoteData, error: fetchErr } = await client
         .from('pos_state')
         .select('updated_at')
@@ -978,7 +1159,7 @@ window.pushFullStateToSupabaseSafe = async function () {
           // it's safe to attempt without asking. If fetching/merging fails for any
           // reason (including the remote row belonging to a different Supabase
           // Auth account, which must never be merged in), fall through to the
-          // original manual conflict dialog.
+          // original manual Force-Sync-or-abort dialog.
           try {
             const { data: authCheck } = await client.auth.getUser();
             const { data: fullRemote, error: fullFetchErr } = await client
@@ -997,21 +1178,18 @@ window.pushFullStateToSupabaseSafe = async function () {
             if (pushed) return true;
             throw new Error('รวมข้อมูลสำเร็จแต่ push ขึ้น Supabase ไม่สำเร็จ');
           } catch (mergeErr) {
-            console.error("[Conflict Engine] Automatic merge failed, falling back to a safe conflict notification:", mergeErr);
+            console.error("[Conflict Engine] Automatic merge failed, falling back to manual Force Sync prompt:", mergeErr);
             if (typeof window.logSystemError === 'function') {
               window.logSystemError('SYNC_MERGE_FAILED', mergeErr.message, mergeErr.stack);
             }
           }
 
-          if (Date.now() - pf.lastDialogAt < 60 * 1000) {
-            // เพิ่งเด้งไปเมื่อไม่ถึง 1 นาทีที่แล้ว ไม่เด้งซ้ำถี่ๆ ให้รำคาญ (แต่ยัง log ไว้เหมือนเดิม)
-            return false;
-          }
+          if (Date.now() - pf.lastDialogAt < 60 * 1000) return false;
           pf.lastDialogAt = Date.now();
           if (typeof window.showAlert === 'function') {
             window.showAlert(
-              "⚠️ ตรวจพบข้อมูลขัดแย้ง",
-              "มีเครื่องอื่นอัปเดตข้อมูลก่อนหน้า และระบบไม่สามารถรวมข้อมูลอัตโนมัติได้ ระบบจะไม่เขียนทับข้อมูลอีกเครื่องโดยอัตโนมัติ",
+              "⚠️ พบข้อมูลขัดแย้ง",
+              "ระบบรวมข้อมูลอัตโนมัติไม่สำเร็จ จึงหยุดการส่งข้อมูลเพื่อป้องกันการเขียนทับข้อมูลของอีกเครื่อง กรุณาตรวจสอบการเชื่อมต่อแล้วลองทำรายการใหม่",
               true
             );
           }
@@ -1025,7 +1203,12 @@ window.pushFullStateToSupabaseSafe = async function () {
     if (!authUserId) throw new Error('ยังไม่มี Supabase Auth session จึงไม่อนุญาตให้ซิงค์ข้อมูล');
 
     const stateForRemote = JSON.parse(JSON.stringify(db));
-    
+    Object.values(stateForRemote.products || {}).forEach(p => {
+      if (p.imageStoragePath) p.imageUrl = '';
+    });
+    (stateForRemote.documents || []).forEach(d => {
+      if (d.fileStoragePath) d.fileUrl = '';
+    });
 
     const { error: upsertErr } = await client
       .from('pos_state')
@@ -1144,7 +1327,6 @@ window.updateSyncStatusBadge = updateSyncStatusBadge;
 
 window.addEventListener('DOMContentLoaded', async () => {
   try {
-    if (typeof window.updateSupabaseConnectionStatus === 'function') await window.updateSupabaseConnectionStatus();
     const hasAccount = !!localStorage.getItem('POS_ACCOUNT_ID');
     const hasSupabaseConfig = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
     // ห้ามดึงข้อมูล remote ตอน startup ก่อน Login/Auth สำเร็จ
@@ -1168,16 +1350,17 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
     const deviceBadge = document.getElementById('device-id-badge');
     const deviceId = (deviceBadge?.innerText || '').replace('DEVICE: ', '').trim() || window.__deviceId || null;
     
-    // Strict Append-Only Insert (Prevents modifications assuming backend RLS)
+    // Strict append-only insert; actor identity comes from Supabase Auth, not browser payload.
+    const authUser = (await getSupabaseClient().auth.getUser()).data?.user;
     getSupabaseClient().from('audit_log').insert([{
       id: entry.id,
+      owner_id: authUser?.id || null,
+      created_by: authUser?.id || null,
       ts: entry.ts,
       action: entry.action,
       actor: entry.actor,
       details: entry.details,
-      device_id: deviceId,
-      owner_id: (await getSupabaseClient().auth.getUser()).data?.user?.id || null,
-      created_by: (await getSupabaseClient().auth.getUser()).data?.user?.id || null
+      device_id: deviceId
     }]).then(({ error }) => {
       if (error) {
          console.warn("Audit log append-only push failed (Check network/RLS policies):", error);
@@ -1187,3 +1370,5 @@ window.logTransaction = async function (action, details = {}, opts = {}) {
   
   return entry;
 };
+
+window.signOutSupabaseOnly=async function(){try{if(_supabaseClient)await _supabaseClient.auth.signOut();}catch(_){} _supabaseClient=null; _supabaseAuthSubscription=null; window.POS_SUPABASE_SESSION=null; window.POS_SUPABASE_AUTH_STATE='SIGNED_OUT';};
