@@ -117,8 +117,25 @@ window.completeFirstTimeSetup = async function () {
     localStorage.removeItem(SUPABASE_URL_STORAGE_KEY);
     localStorage.removeItem(SUPABASE_KEY_STORAGE_KEY);
 
-    alert('สร้างบัญชีสำเร็จ สามารถทดสอบโปรแกรมได้ทันที โดยยังไม่ต้องเชื่อมฐานข้อมูล');
-    location.reload();
+    // Do not reload the page here. A full reload can race with deferred scripts and
+    // leaves the setup screen/lock screen in an inconsistent state on mobile Safari.
+    // The local account is already persisted, so switch to the normal login screen
+    // in-place and let the existing Core startup state continue.
+    try {
+      const setupScreen = document.getElementById('first-time-setup-screen');
+      const lockScreen = document.getElementById('lock-screen');
+      if (setupScreen) { setupScreen.classList.add('hidden'); setupScreen.classList.remove('flex'); }
+      if (lockScreen) { lockScreen.style.display = 'flex'; lockScreen.style.opacity = '1'; }
+      const loginId = document.getElementById('login-user-id');
+      if (loginId) { loginId.value = userId; setTimeout(() => loginId.focus(), 50); }
+      if (typeof window.updateSyncUI === 'function') window.updateSyncUI();
+      if (typeof window.showToast === 'function') window.showToast('✅ สร้างบัญชีเจ้าของร้านแล้ว กรุณาเข้าสู่ระบบ');
+    } catch (uiErr) {
+      console.warn('[First setup] UI transition failed:', uiErr);
+      // Last-resort fallback: never replace the whole document with a blank page.
+      const lockScreen = document.getElementById('lock-screen');
+      if (lockScreen) lockScreen.style.display = 'flex';
+    }
   } catch (err) {
     console.error('First setup failed:', err);
     alert('สร้างบัญชีไม่สำเร็จ: ' + (err.message || err));
