@@ -1,0 +1,112 @@
+# ================================
+# Smart POS v4 - Git Ignore
+# ================================
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets/
+credentials/
+config.local.*
+config.private.*
+
+# Supabase secrets / local config
+.supabase/
+supabase/.temp/
+supabase/.branches/
+supabase/.env
+supabase/.env.*
+
+# Private keys / certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+
+# Credentials / tokens
+*service_role*
+*service-role*
+*sb_secret*
+*secret_key*
+*private_key*
+*access_token*
+*refresh_token*
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Desktop.ini
+
+# Node / build files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build / cache
+dist/
+build/
+.cache/
+.parcel-cache/
+.vite/
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Local application data
+local-data/
+local-db/
+data/
+backups/
+
+# Exported/private data
+exports/
+private/
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+
+# Uploaded/private product data
+private-images/
+private-uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Temporary security scan output
+security-report-private.txt
+
+# Never commit personal/store data
+store-data/
+customer-data/
+supplier-data/
+sales-data/
