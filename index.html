@@ -3,8 +3,8 @@
 <html lang="th">
 <head>
 <meta charset="utf-8"/>
-<title>Smart POS Pro V3 — Fast Mobile Edition</title>
-<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<title>Smart POS Pro V7.10 - Fast Checkout Edition</title>
+<meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <meta content="yes" name="apple-mobile-web-app-capable"/>
 <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
 
@@ -14,6 +14,7 @@
          POS device overnight without warning. -->
 <script defer="" src="https://cdn.tailwindcss.com/3.4.17"></script>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<script defer="" src="https://unpkg.com/html5-qrcode"></script>
 <script defer="" src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
 <script defer="" src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -82,266 +83,6 @@
         }
         .no-print { display: none !important; }
       }
-
-
-      /* =========================================================
-         MOBILE UX / TOUCH OPTIMIZATION
-         Tuned for iPhone/iPad and small Android screens.
-         ========================================================= */
-      :root { --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px); }
-      html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-      body { min-height: 100dvh; overflow-x: hidden; overscroll-behavior-x: none; }
-      input, textarea, select { user-select: text; -webkit-user-select: text; }
-      button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
-      input, select, textarea { max-width: 100%; }
-      #bottom-nav { padding-bottom: var(--safe-bottom); height: calc(5rem + var(--safe-bottom)); }
-      #app-main { padding-bottom: calc(7rem + var(--safe-bottom)); }
-      #bottom-nav .nav-btn-el { min-height: 3.75rem; touch-action: manipulation; }
-      #bottom-nav .nav-btn-el span { line-height: 1.05; }
-      #cart-fab { bottom: calc(5.75rem + var(--safe-bottom)); }
-      #toast { left: .75rem; right: .75rem; top: auto; bottom: calc(6rem + var(--safe-bottom)); transform: translateY(140px); }
-      #toast > div { width: 100%; justify-content: center; min-height: 3rem; }
-      #debug-error-box { user-select: text !important; -webkit-user-select: text !important; padding-bottom: calc(.5rem + var(--safe-bottom)) !important; }
-      .btn-touch { min-height: 44px; }
-      .p-card { min-height: 9.5rem; content-visibility: auto; contain-intrinsic-size: 160px; }
-      #search-product { min-height: 52px; font-size: 16px !important; }
-      #bestseller-row { scrollbar-width: none; }
-      #bestseller-row::-webkit-scrollbar { display: none; }
-
-      @media (max-width: 640px) {
-        input, select, textarea { font-size: 16px !important; }
-        header { padding-top: calc(.65rem + var(--safe-top)); padding-bottom: .65rem; }
-        header .w-12.h-12 { width: 2.6rem; height: 2.6rem; border-radius: .9rem; }
-        header .text-right .text-sm { font-size: .72rem; }
-        header .text-right { padding-left: .55rem; }
-        main { padding-left: .75rem; padding-right: .75rem; }
-        #category-grid, #product-grid { gap: .55rem; }
-        #category-grid > *, #product-grid > * { min-width: 0; }
-        #product-grid .p-card { height: 10.5rem !important; min-height: 10.5rem; border-radius: 1.15rem; }
-        #category-grid .p-card { height: 7.25rem !important; min-height: 7.25rem; border-radius: 1.15rem; }
-        #product-grid .p-card .text-3xl { font-size: 1.8rem; }
-        #stock-action-grid { gap: .4rem; }
-        #stock-action-grid .btn-touch { min-height: 58px; padding: .45rem .25rem; border-radius: .85rem; font-size: 10px; }
-        #stock-action-grid .btn-touch span { font-size: 1rem; margin-bottom: .15rem; }
-        #view-stock .overflow-x-auto { -webkit-overflow-scrolling: touch; }
-        #view-stock table { min-width: 620px; }
-        #view-history .flex.gap-2 { flex-direction: column; }
-        #view-history .flex.gap-2 > * { width: 100%; flex: none; }
-        #view-customers h3, #view-reports h3 { font-size: 1.25rem; }
-        #bottom-nav { background: rgba(255,255,255,.96); }
-        #bottom-nav .nav-btn-el { font-size: 9px; }
-        #bottom-nav .nav-btn-el .text-2xl { font-size: 1.35rem; }
-        #bottom-nav .nav-btn-el .text-\[9px\] { font-size: 9px; }
-        #cart-fab { width: 64px; height: 64px; right: 14px; border-radius: 20px; }
-        .modal-panel-mobile { max-height: calc(100dvh - 1rem); overflow-y: auto; -webkit-overflow-scrolling: touch; }
-        /* Prevent wide management forms from forcing the whole page to scroll sideways. */
-        #modal-product, #modal-settings, #modal-command, #modal-customer, #modal-payment, #modal-select-variant, #modal-select-unit, #modal-select-group { padding: .5rem !important; }
-        #modal-product > div, #modal-settings > div, #modal-command > div, #modal-customer > div, #modal-payment > div, #modal-select-variant > div, #modal-select-unit > div, #modal-select-group > div > div { max-height: calc(100dvh - 1rem); overflow-y: auto; -webkit-overflow-scrolling: touch; }
-      }
-
-      @media (max-width: 380px) {
-        #bottom-nav .nav-btn-el .text-2xl { font-size: 1.2rem; }
-        #bottom-nav .nav-btn-el .text-\[9px\] { font-size: 8px; }
-        #stock-action-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
-      }
-
-
-/* =========================================================
-   Smart POS V3 — rebuilt visual system
-   Keeps existing IDs/business logic; refreshes the presentation.
-   ========================================================= */
-:root{
-  --v3-primary:#4f46e5;
-  --v3-primary-2:#6366f1;
-  --v3-ink:#0f172a;
-  --v3-muted:#64748b;
-  --v3-card:#ffffff;
-  --v3-border:#e2e8f0;
-  --v3-radius:20px;
-}
-body{
-  background:
-    radial-gradient(circle at 10% -5%, rgba(99,102,241,.10), transparent 28rem),
-    radial-gradient(circle at 100% 10%, rgba(14,165,233,.08), transparent 25rem),
-    #f8fafc;
-  color:var(--v3-ink);
-}
-#app-header-v3{
-  background:rgba(255,255,255,.86)!important;
-  border-bottom:1px solid rgba(148,163,184,.20)!important;
-  box-shadow:0 8px 28px rgba(15,23,42,.06)!important;
-  backdrop-filter:blur(18px);
-}
-#app-header-v3 > div:first-child > div:first-child{
-  box-shadow:0 8px 20px rgba(79,70,229,.22)!important;
-}
-#app-main{
-  max-width:1500px;
-  margin:0 auto;
-}
-.view-content{
-  animation: v3-in .18s ease-out;
-}
-@keyframes v3-in{
-  from{opacity:.6;transform:translateY(4px)}
-  to{opacity:1;transform:translateY(0)}
-}
-.p-card{
-  border:1px solid rgba(226,232,240,.95)!important;
-  box-shadow:0 6px 20px rgba(15,23,42,.05)!important;
-  background:#fff;
-  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-}
-.p-card:hover{
-  transform:translateY(-2px);
-  box-shadow:0 12px 28px rgba(15,23,42,.09)!important;
-  border-color:rgba(99,102,241,.28)!important;
-}
-#search-product{
-  border-color:#e2e8f0!important;
-  box-shadow:0 8px 24px rgba(15,23,42,.06)!important;
-}
-#category-grid > *, #product-grid > *{
-  min-width:0;
-}
-#bottom-nav{
-  height:calc(4.6rem + var(--safe-bottom))!important;
-  background:rgba(255,255,255,.92)!important;
-  border-top:1px solid rgba(148,163,184,.22)!important;
-  box-shadow:0 -12px 30px rgba(15,23,42,.08)!important;
-}
-#bottom-nav .nav-btn-el{
-  border-radius:16px;
-  margin:4px 2px;
-  transition:background .15s, color .15s, opacity .15s, transform .15s;
-}
-#bottom-nav .nav-btn-el:active{transform:scale(.96)}
-#cart-fab{
-  box-shadow:0 16px 34px rgba(79,70,229,.28)!important;
-}
-.modal-panel-mobile,
-#modal-command > div,
-#modal-product > div,
-#modal-settings > div,
-#modal-customer > div,
-#modal-payment > div{
-  border-radius:24px!important;
-}
-#stock-action-grid .btn-touch{
-  min-height:68px!important;
-  border-radius:18px!important;
-  box-shadow:0 6px 14px rgba(15,23,42,.07);
-}
-#stock-action-grid .btn-touch span{
-  font-size:1.25rem!important;
-}
-#modal-command > div{
-  max-height:calc(100dvh - 1rem)!important;
-}
-#modal-command .sticky.bottom-0{
-  border-top:1px solid rgba(226,232,240,.9);
-}
-#import-preview-area table{
-  font-size:11px;
-}
-#import-preview-area th{
-  position:sticky;
-  top:0;
-  z-index:2;
-  background:#f8fafc;
-}
-#integrated-image-log{
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-}
-@media (max-width:640px){
-  #app-header-v3{
-    padding-left:.8rem!important;
-    padding-right:.8rem!important;
-    padding-top:calc(.55rem + var(--safe-top))!important;
-    padding-bottom:.55rem!important;
-  }
-  #app-main{
-    padding-left:.7rem!important;
-    padding-right:.7rem!important;
-    padding-bottom:calc(6.4rem + var(--safe-bottom))!important;
-  }
-  #category-grid{
-    grid-template-columns:repeat(2,minmax(0,1fr))!important;
-    gap:.6rem!important;
-  }
-  #product-grid{
-    grid-template-columns:repeat(2,minmax(0,1fr))!important;
-    gap:.6rem!important;
-  }
-  #product-grid .p-card{
-    height:11rem!important;
-    min-height:11rem!important;
-    border-radius:18px!important;
-  }
-  #category-grid .p-card{
-    height:7.4rem!important;
-    min-height:7.4rem!important;
-    border-radius:18px!important;
-  }
-  #stock-action-grid{
-    grid-template-columns:repeat(3,minmax(0,1fr))!important;
-    gap:.5rem!important;
-  }
-  #stock-action-grid .btn-touch{
-    min-height:70px!important;
-    padding:.45rem .2rem!important;
-    font-size:10px!important;
-  }
-  #modal-command{
-    padding:.35rem!important;
-    align-items:flex-end!important;
-  }
-  #modal-command > div{
-    width:100%!important;
-    border-radius:24px 24px 14px 14px!important;
-    padding:1rem!important;
-    max-height:calc(100dvh - .7rem)!important;
-  }
-  #modal-command .grid{
-    grid-template-columns:1fr!important;
-  }
-  #modal-command #import-file-uploader{
-    font-size:12px!important;
-  }
-  #modal-command #import-image-files-uploader{
-    min-height:46px;
-  }
-  #modal-command #preview-actions-bar{
-    position:sticky;
-    top:0;
-    z-index:4;
-  }
-  #modal-command .sticky.bottom-0{
-    margin-left:-1rem;
-    margin-right:-1rem;
-    padding-left:1rem;
-    padding-right:1rem;
-  }
-  #btn-confirm-import,
-  #btn-confirm-import-with-images{
-    min-height:52px!important;
-  }
-  #bottom-nav .nav-btn-el{
-    min-height:3.45rem!important;
-    margin-top:2px;
-    margin-bottom:2px;
-  }
-  #bottom-nav .nav-btn-el .text-2xl{
-    font-size:1.25rem!important;
-  }
-}
-@media (prefers-reduced-motion:reduce){
-  *,*::before,*::after{
-    animation-duration:.001ms!important;
-    transition-duration:.001ms!important;
-    scroll-behavior:auto!important;
-  }
-}
 
 </style>
 </head>
@@ -421,12 +162,21 @@ body{
 <input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-store-name" placeholder="เช่น ร้าน ช.เจริญกิจ" type="text"/>
 </div>
 <div>
-<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผู้ใช้ (ID) เจ้าของร้าน</label>
-<input autocomplete="username" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-user-id" placeholder="เช่น owner01" type="text"/>
-<p class="text-[9px] text-slate-500 mt-1">ใช้สำหรับเข้าสู่ระบบของร้านนี้ ไม่ใช้ร่วมกับร้านอื่น</p>
+<label class="text-xs font-bold text-slate-300 block mb-1">อีเมลเจ้าของร้าน</label>
+<input autocomplete="email" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-owner-email" placeholder="owner@example.com" type="email"/>
+<p class="text-[9px] text-slate-500 mt-1">ใช้อีเมลนี้เป็นบัญชี Owner ใน Supabase Auth และใช้เข้าสู่ระบบครั้งต่อไป</p>
 </div>
 <div>
-<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่าน (Password)</label>
+<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
+<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30 font-mono" id="setup-supabase-url" placeholder="https://xxxxx.supabase.co" type="url"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Publishable / anon key</label>
+<input autocomplete="off" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30 font-mono" id="setup-supabase-key" placeholder="sb_publishable_... หรือ anon key" type="password"/>
+<p class="text-[9px] text-slate-500 mt-1">ใช้เฉพาะ Publishable/anon key เท่านั้น ห้ามใช้ service_role หรือ sb_secret</p>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่านเจ้าของร้าน</label>
 <input autocomplete="new-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-user-password" placeholder="อย่างน้อย 8 ตัวอักษร" type="password"/>
 </div>
 <div>
@@ -434,10 +184,40 @@ body{
 <input autocomplete="new-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-user-password-confirm" placeholder="กรอกรหัสผ่านอีกครั้ง" type="password"/>
 </div>
 <div class="bg-indigo-500/10 border border-indigo-400/20 rounded-xl p-3 text-[10px] text-indigo-200 leading-relaxed">
-<b>ขั้นตอนนี้ยังไม่ต้องใส่ฐานข้อมูล</b><br/>สร้างบัญชีและทดสอบโปรแกรมบนเครื่องได้ก่อน จากนั้นค่อยไปที่ ⚙️ ตั้งค่า → ฐานข้อมูลและการซิงค์ข้อมูล เพื่อเชื่อมต่อ Supabase ของร้านคุณเอง
+<b>สร้างร้านและบัญชี Owner ใน Supabase โดยตรง</b><br/>ข้อมูล Email/Password ใช้กับ Supabase Auth เท่านั้น ไม่บันทึกรหัสผ่านลง Local Storage และ Session จะถูกจำไว้โดย Supabase จนกว่าจะ Logout หรือหมดอายุ
+</div>
+<button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">✅ สร้างร้านและบัญชี Owner</button>
+<p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">Repository จะไม่มี Project URL/Key ของคุณติดอยู่ใน source ค่าเชื่อมต่อจะถูกบันทึกเฉพาะในเครื่องนี้</p>
+<button class="w-full text-center text-[11px] text-indigo-300 underline mt-4 btn-touch" onclick="document.getElementById('setup-fresh-fields').classList.add('hidden'); document.getElementById('setup-join-fields').classList.remove('hidden');" type="button">มีร้านอยู่แล้ว? เชื่อมต่อร้านเดิม</button>
+</div>
+<!-- โหมด "เชื่อมต่อร้านที่มีอยู่แล้ว" สำหรับติดตั้งบนเครื่องที่สอง/เครื่องพนักงาน โดยดึงข้อมูล
+             ร้านจริงจากคลาวด์มาใช้ แทนที่จะสร้างร้านใหม่ว่างๆ ทับ -->
+<div class="space-y-3 hidden" id="setup-join-fields">
+<div class="bg-teal-500/10 border border-teal-400/20 rounded-xl p-3 text-[10px] text-teal-200 leading-relaxed mb-1">
+            ใช้โหมดนี้เมื่อร้านมีบัญชี Supabase อยู่แล้ว (ตั้งค่าไว้จากเครื่องแรก) และต้องการให้เครื่องนี้ดึงข้อมูลร้านเดิมมาใช้ — กรอกข้อมูล Supabase และอีเมล/รหัสผ่านของ <b>เจ้าของร้าน (owner)</b> เท่านั้น
           </div>
-<button class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeFirstTimeSetup()">✅ สร้างบัญชีและเริ่มทดสอบโปรแกรม</button>
-<p class="text-[10px] text-slate-500 text-center mt-3 leading-relaxed">สร้างบัญชีเพื่อทดสอบได้โดยไม่ต้องมีฐานข้อมูลก่อน เมื่อพร้อมใช้งานจริงค่อยเชื่อมต่อ Supabase ของร้านตัวเอง<br/>ใช้เฉพาะ <b>anon public key</b> ห้ามใส่ service_role/secret key</p>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">Supabase Project URL</label>
+<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-url" placeholder="https://xxxxx.supabase.co" type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">anon public key</label>
+<input class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-key" placeholder="eyJhbGciOi..." type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">อีเมลของเจ้าของร้าน (owner)</label>
+<input autocomplete="username" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-email" placeholder="owner@example.com" type="text"/>
+</div>
+<div>
+<label class="text-xs font-bold text-slate-300 block mb-1">รหัสผ่าน Supabase ของเจ้าของร้าน</label>
+<input autocomplete="current-password" class="w-full bg-white/10 border border-white/20 rounded-xl py-3 px-4 outline-none text-sm text-white placeholder-white/30" id="setup-join-password" placeholder="รหัสผ่านที่ตั้งไว้ตอนเชื่อมต่อ Supabase ครั้งแรก" type="password"/>
+</div>
+<div class="hidden text-[11px] text-red-400 font-bold text-center" id="setup-join-error"></div>
+<button class="w-full py-4 bg-teal-600 hover:bg-teal-700 rounded-2xl font-bold text-sm mt-2 btn-touch" onclick="window.completeJoinExistingAccount()">🔗 ดึงข้อมูลร้านเดิมมาที่เครื่องนี้</button>
+<p class="text-[10px] text-slate-500 text-center mt-1 leading-relaxed">หลังเชื่อมต่อสำเร็จ เครื่องนี้จะล็อกอินด้วย User ID/รหัสผ่าน (PIN) ของพนักงานแต่ละคนตามปกติ ไม่ใช่อีเมลนี้ — อีเมลนี้ใช้แค่ครั้งเดียวตอนดึงข้อมูล</p>
+<button class="w-full text-center text-[11px] text-slate-400 underline btn-touch" onclick="document.getElementById('setup-join-fields').classList.add('hidden'); document.getElementById('setup-fresh-fields').classList.remove('hidden');" type="button">← กลับไปสร้างร้านใหม่แทน</button>
+</div>
+</div>
 </div>
 <div class="fixed inset-0 z-[9999] bg-slate-950 flex flex-col items-center justify-center text-white p-6 transition-all duration-500" id="lock-screen" style="opacity: 1; display: flex;">
 <div class="mb-8 text-center fade-in">
@@ -447,20 +227,20 @@ body{
 <p class="mt-4 text-xs font-mono bg-white/10 px-3 py-1 rounded-full inline-block text-indigo-200 border border-white/10" id="device-id-badge">DEVICE: ---</p>
 <p class="mt-2 text-[10px] font-bold text-indigo-300" id="supabase-sync-badge">⚪ ยังไม่เคยซิงค์</p>
 </div>
-<p class="text-slate-400 text-sm mb-5 tracking-wide">เข้าสู่ระบบด้วย ID และรหัสผ่านของร้านนี้</p>
+<p class="text-slate-400 text-sm mb-5 tracking-wide">เข้าสู่ระบบด้วยอีเมลและรหัสผ่านของบัญชี Supabase</p>
 <div class="w-full max-w-sm space-y-3">
-<input autocomplete="username" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-user-id" placeholder="User ID" type="text"/>
-<input autocomplete="current-password" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-user-password" onkeydown="if(event.key==='Enter') window.submitAccountLogin()" placeholder="Password" type="password"/>
+<input autocomplete="username" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-owner-email" placeholder="owner@example.com" type="text"/>
+<input autocomplete="current-password" class="w-full bg-white/10 border border-white/10 rounded-2xl py-4 px-5 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-bold" id="login-owner-password" onkeydown="if(event.key==='Enter') window.submitAccountLogin()" placeholder="Password" type="password"/>
 <button class="w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 font-bold btn-touch" onclick="window.submitAccountLogin()">🔐 เข้าสู่ระบบ</button>
 <button class="w-full py-2 text-xs text-slate-500 hover:text-slate-300" onclick="window.lockCurrentAccount()">ออกจากบัญชี / เปลี่ยนฐานข้อมูล</button>
 </div>
 <div class="min-h-8 mt-4 flex items-center justify-center" id="account-login-error">
-<p class="text-rose-400 text-sm font-bold hidden" id="account-login-error-text">❌ ID หรือรหัสผ่านไม่ถูกต้อง</p>
+<p class="text-rose-400 text-sm font-bold hidden" id="account-login-error-text">❌ อีเมลหรือรหัสผ่านไม่ถูกต้อง</p>
 <p class="text-amber-400 text-sm font-bold hidden" id="account-login-lockout-text">🔒 บัญชีถูกล็อกชั่วคราว กรุณารอสักครู่</p>
 </div>
 </div>
 <!-- Header -->
-<header id="app-header-v3" class="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-4 flex justify-between items-center shadow-sm">
+<header class="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-4 flex justify-between items-center shadow-sm">
 <div class="flex items-center gap-4">
 <div class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-xl font-bold shadow-lg">P</div>
 <div class="flex flex-col">
@@ -484,7 +264,7 @@ body{
 </div>
 </div>
 </header>
-<main id="app-main" class="p-4 pb-40 v3-main">
+<main class="p-4 pb-40">
 <!-- VIEW: SALE -->
 <section class="view-content block fade-in" id="view-sale">
 <div class="mb-4 relative">
@@ -518,9 +298,7 @@ body{
 </section>
 <!-- VIEW: STOCK -->
 <section class="view-content hidden fade-in" id="view-stock">
-<div class="mb-4 flex justify-end"><button class="bg-pink-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openModal('modal-bulk-image')"><span class="text-sm">🖼️</span>นำเข้ารูป(ชุด)</button></div>
-
-<div id="stock-action-grid" class="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-4 text-center text-slate-800">
+<div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-4 text-center text-slate-800">
 <button class="bg-indigo-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openProductModal()">
 <span class="text-sm">➕</span>เพิ่มสินค้าใหม่</button>
 <button class="bg-purple-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.toggleColumnPanel()">
@@ -531,6 +309,8 @@ body{
 <span class="text-sm">🛒</span>รับเครดิตของเข้า</button>
 <button class="bg-slate-800 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openQuickCommandModal()">
 <span class="text-sm">⚡</span>นำเข้าด่วน</button>
+<button class="bg-pink-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="document.getElementById('modal-bulk-image').classList.remove('hidden'); document.getElementById('modal-bulk-image').classList.add('flex');">
+<span class="text-sm">🖼️</span>นำเข้ารูป(ชุด)</button>
 <button class="bg-cyan-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.showView('documents')">
 <span class="text-sm">📎</span>เอกสารทั้งหมด</button>
 <button class="bg-teal-600 text-white p-1.5 rounded-xl font-bold text-[9px] shadow-sm btn-touch leading-tight flex flex-col items-center justify-center" onclick="window.openRunCodeModal()">
@@ -697,7 +477,7 @@ body{
                 🖨️ พิมพ์สมุดบัญชีเงินสดรับ-จ่าย ยื่นสรรพากร
               </button>
 </div>
-<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 text-center">
+<div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-center">
 <div class="bg-indigo-50/70 p-4 rounded-2xl border border-indigo-100 shadow-xs">
 <p class="text-[10px] font-bold text-indigo-400 mb-1 uppercase tracking-widest">ยอดขายสุทธิวันนี้ (Net)</p>
 <h3 class="text-xl font-black text-indigo-600 tracking-tighter" id="report-daily-revenue">฿0.00</h3>
@@ -712,11 +492,6 @@ body{
 <p class="text-[10px] font-bold text-rose-500 mb-1 uppercase tracking-widest">รายจ่ายสะสมในระบบ</p>
 <h3 class="text-xl font-black text-rose-600 tracking-tighter" id="report-estimated-expense">฿0.00</h3>
 <span class="text-[9px] text-rose-400 block mt-1 font-bold">รวมทุนของและรายจ่ายประจำ</span>
-</div>
-<div class="bg-violet-50/70 p-4 rounded-2xl border border-violet-100 shadow-xs">
-<p class="text-[10px] font-bold text-violet-500 mb-1 uppercase tracking-widest">กำไรจากสินค้าที่ขายจริง</p>
-<h3 class="text-xl font-black text-violet-600 tracking-tighter" id="report-gross-profit">฿0.00</h3>
-<span class="text-[9px] text-violet-500 block mt-1 font-bold" id="report-gross-margin">Gross Margin: 0%</span>
 </div>
 <div class="bg-amber-50/70 p-4 rounded-2xl border border-amber-100 shadow-xs">
 <p class="text-[10px] font-bold text-amber-500 mb-1 uppercase tracking-widest">กำไรสุทธิทางบัญชีภาษี</p>
@@ -984,7 +759,7 @@ body{
 </section>
 </main>
 <!-- Navigation Bar -->
-<nav id="bottom-nav" class="fixed bottom-0 inset-x-0 z-50 bg-white/90 backdrop-blur-xl border-t border-slate-200 h-24 flex justify-around items-center px-2 shadow-[0_-5px_30px_rgba(0,0,0,0.05)] no-print">
+<nav class="fixed bottom-0 inset-x-0 z-50 bg-white/90 backdrop-blur-xl border-t border-slate-200 h-24 flex justify-around items-center px-2 shadow-[0_-5px_30px_rgba(0,0,0,0.05)] no-print">
 <button class="flex flex-col items-center w-full opacity-40 nav-btn-el btn-touch" data-view="sale" onclick="window.showView('sale')">
 <span class="text-2xl sm:text-3xl">🛍️</span>
 <span class="text-[9px] sm:text-[10px] font-extrabold mt-1 tracking-tighter uppercase">ขาย</span>
@@ -1173,7 +948,7 @@ body{
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">2.</b><span><b>ตั้ง PIN เจ้าของร้าน</b> — เปิดหัวข้อ "👥 ผู้ใช้งานและความปลอดภัย" ตั้ง PIN 4 หลักไว้ล็อกหน้าจอและป้องกันการแก้ไขข้อมูลสำคัญ (ถ้ายังไม่ตั้ง ใครก็เปิดแก้ข้อมูลได้ทุกอย่าง)</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">3.</b><span><b>เพิ่มคนอื่นในครอบครัว/พนักงาน (ถ้ามี)</b> — ในหัวข้อเดียวกัน กด "เปิดหน้าจัดการผู้ใช้งาน" เพื่อให้แต่ละคนมี PIN ของตัวเอง ระบบจะบันทึกไว้ว่าใครทำรายการอะไร — <u>ถ้าใช้คนเดียว ข้ามขั้นตอนนี้ได้เลย</u> ไม่จำเป็นต้องสร้างผู้ใช้งานเพิ่ม PIN หลักก็ใช้งานได้ครบ</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">4.</b><span><b>เพิ่มสินค้า</b> — ไปที่หน้า "คลัง" กด "เพิ่มสินค้าใหม่" ทีละชิ้น หรือถ้ามีสินค้าเยอะ ใช้ปุ่มนำเข้าจากไฟล์ Excel/CSV แทน (ประหยัดเวลากว่ามาก)</span></li>
-<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>เชื่อมต่อ Supabase สำหรับฐานข้อมูลร้าน</b> — ถ้าจะเปิดร้านจากมากกว่า 1 เครื่อง/เบราว์เซอร์ ให้เปิดหัวข้อ "🗄️ ฐานข้อมูลและการซิงค์ข้อมูล" กรอก Project URL และ anon key จาก Supabase แล้วกด "บันทึกและเชื่อมต่อ" — ถ้าเปิดจากเครื่องเดียวตลอด ข้ามได้เลย</span></li>
+<li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">5.</b><span><b>เชื่อมต่อ Supabase (ไม่บังคับ — ใส่แค่ตอนใช้หลายเครื่อง)</b> — ถ้าจะเปิดร้านจากมากกว่า 1 เครื่อง/เบราว์เซอร์ ให้เปิดหัวข้อ "🗄️ ฐานข้อมูลและการซิงค์ข้อมูล" กรอก Project URL และ anon key จาก Supabase แล้วกด "บันทึกและเชื่อมต่อ" — ถ้าเปิดจากเครื่องเดียวตลอด ข้ามได้เลย</span></li>
 <li class="flex gap-2"><b class="text-amber-700 flex-shrink-0">6.</b><span><b>เริ่มขายได้เลย</b> — กลับไปหน้า "ขาย" เปิดกะ (ถ้ายังไม่เปิด) แล้วเริ่มขายสินค้าได้ทันที</span></li>
 </ol>
 <div class="bg-white p-3 rounded-xl border border-amber-200 mt-3 text-[10px] text-slate-500 leading-relaxed">
@@ -1289,24 +1064,13 @@ body{
 </details>
 <!-- ================= 3. DATABASE & SYNC ================= -->
 <details class="bg-teal-50 rounded-2xl border border-teal-200 overflow-hidden">
-<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1" onclick="setTimeout(window.loadSupabaseConfigIntoForm, 0)">🗄️ ฐานข้อมูลและการซิงค์ข้อมูล</summary>
+<summary class="p-4 font-bold text-teal-800 cursor-pointer text-xs flex items-center gap-1">🗄️ ฐานข้อมูลและการซิงค์ข้อมูล</summary>
 <div class="p-4 pt-0 space-y-3">
 <div class="bg-white p-3 rounded-xl border border-teal-100">
-<h4 class="text-xs font-bold text-teal-800 mb-1">การเชื่อมต่อ Supabase ของร้านนี้</h4>
-<p class="text-[9px] text-slate-500 mb-2 leading-relaxed">
-<b>ซิงค์อัตโนมัติอยู่แล้ว</b> ทุกการเปลี่ยนแปลงในเครื่องนี้ส่งขึ้น Supabase เองในเบื้องหลัง
-                  และทุกครั้งที่เปิดแอปจะดึงข้อมูลล่าสุดมาอัตโนมัติก่อนแสดงหน้าจอ
-                </p>
-<label class="text-[10px] font-bold text-slate-500 mb-1 block">Project URL</label>
-<input class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] font-mono outline-none text-slate-800 mb-2" id="supabase-config-url" placeholder="https://xxxxx.supabase.co" type="text"/>
-<label class="text-[10px] font-bold text-slate-500 mb-1 block">anon public key</label>
-<input class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] font-mono outline-none text-slate-800 mb-2" id="supabase-config-key" placeholder="eyJ..." type="text"/>
-<label class="text-[10px] font-bold text-slate-500 mb-1 block">อีเมลสำหรับ Supabase Auth / กู้คืนบัญชี</label>
-<input autocomplete="email" class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] outline-none text-slate-800 mb-2" id="supabase-auth-email" placeholder="owner@example.com" type="email"/>
-<label class="text-[10px] font-bold text-slate-500 mb-1 block">รหัสผ่านบัญชี (ใช้ยืนยันครั้งแรกเท่านั้น)</label>
-<input autocomplete="current-password" class="w-full bg-white border border-teal-300 rounded-xl py-2 px-3 text-[11px] outline-none text-slate-800 mb-2" id="supabase-auth-password" placeholder="รหัสผ่านของ User ID นี้" type="password"/>
-<p class="text-[9px] text-amber-600 mb-2">⚠️ ใช้ anon public key เท่านั้น ห้ามใช้ service_role/secret key • Password จะไม่ถูกบันทึกลงเครื่อง และจะใช้เฉพาะกับ Supabase Auth ในครั้งที่เชื่อมต่อ</p>
-<button class="w-full py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold text-[10px] btn-touch mb-2" onclick="window.saveSupabaseConfig()">💾 บันทึกและเชื่อมต่อโปรเจกต์นี้</button>
+<h4 class="text-xs font-bold text-teal-800 mb-1">☁️ การเชื่อมต่อคลาวด์</h4>
+<p class="text-[9px] text-slate-500 leading-relaxed">ระบบเชื่อมต่อ Supabase อัตโนมัติหลัง Owner เข้าสู่ระบบ และใช้ Session ของ Supabase เพื่อจำบัญชีระหว่างการใช้งาน ไม่มีปุ่มบังคับซิงค์หรือการกรอก Password ซ้ำในหน้าตั้งค่า</p>
+<div class="mt-2 text-[10px] font-bold text-teal-700" id="settings-cloud-status">กำลังตรวจสอบสถานะ...</div>
+</div>
 </div>
 <!-- ================= ENTERPRISE TOOLS (NEW) ================= -->
 <div class="bg-white p-3 rounded-xl border border-indigo-200">
@@ -1385,9 +1149,6 @@ body{
 <input class="w-full bg-white border rounded-xl py-2.5 px-3 text-xs outline-none text-slate-800" id="user-name" placeholder="ชื่อผู้ใช้งาน (เช่น ลูกชาย, พนักงาน A)" type="text"/>
 <label class="text-[10px] font-bold text-slate-500 block -mb-1">User ID + รหัสผ่าน (ใช้ล็อกอินหน้าหลัก)</label>
 <input autocomplete="off" class="w-full bg-white border rounded-xl py-2.5 px-3 text-xs outline-none text-slate-800" id="user-login-id" placeholder="User ID (a-z, 0-9, 4-32 ตัวอักษร) เช่น staff01" type="text"/>
-<label class="text-[10px] font-bold text-slate-500 mt-2 block">อีเมลสมาชิกสำหรับ Supabase Auth</label>
-<input autocomplete="email" class="w-full bg-white border rounded-xl py-2.5 px-3 text-xs outline-none text-slate-800" id="user-login-email" placeholder="staff@example.com" type="email"/>
-<p class="text-[9px] text-slate-400 mt-1">สมาชิกทุกคนใช้ฐานข้อมูลร้านเดียวกัน แต่เข้าสู่ระบบ Supabase ด้วยบัญชีของตัวเอง</p>
 <input autocomplete="new-password" class="w-full bg-white border rounded-xl py-2.5 px-3 text-xs outline-none text-slate-800" id="user-login-password" placeholder="รหัสผ่านเข้าระบบ (อย่างน้อย 4 ตัวอักษร)" type="password"/>
 <label class="text-[10px] font-bold text-slate-500 block -mb-1 mt-2">PIN อนุมัติผู้จัดการ (ไม่บังคับ)</label>
 <input class="w-full bg-white border rounded-xl py-2.5 px-3 text-xs outline-none text-slate-800 tracking-widest" id="user-pin" inputmode="numeric" maxlength="4" pattern="[0-9]*" placeholder="PIN 4 หลัก (เว้นว่างได้ถ้าไม่ต้องการ)" type="password"/>
@@ -1655,125 +1416,6 @@ body{
 <div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-command">
 <div class="bg-white w-full max-w-4xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
 <div class="flex justify-between items-center mb-4 border-b pb-3">
-<div><h3 class="text-xl font-black text-slate-800">⚡ นำเข้าสินค้าด่วน</h3><p class="text-[10px] text-slate-400 font-semibold mt-0.5">สินค้า + รูปสินค้า • ตรวจสอบก่อนบันทึกจริง</p></div>
-<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-command')">✕</button>
-</div>
-<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-<div class="border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer bg-slate-50 hover:bg-slate-100" onclick="document.getElementById('import-file-uploader').click()">
-<span class="text-4xl mb-2">📁</span>
-<p class="text-xs font-bold text-slate-700">คลิกอัปโหลดไฟล์ Excel (.xlsx) หรือ CSV (.csv)</p>
-<input accept=".xlsx, .csv" class="hidden" id="import-file-uploader" onchange="window.handleBulkFileUpload(event)" type="file"/>
-</div>
-<div class="border-2 border-dashed rounded-2xl p-4 flex flex-col items-center justify-center text-center bg-emerald-50/60 border-emerald-200">
-  <span class="text-3xl mb-1">🖼️</span>
-  <p class="text-xs font-bold text-slate-700">รูปสินค้า (เลือกหลายไฟล์ได้)</p>
-  <p class="text-[10px] text-slate-500 mb-2">ชื่อไฟล์ต้องตรงกับคอลัมน์ "ไฟล์รูปสินค้า" ใน Excel</p>
-  <input accept="image/*" class="w-full text-[10px] border rounded-xl p-2 bg-white text-slate-800" id="import-image-files-uploader" multiple type="file" onchange="window.prepareIntegratedProductImageImport()"/>
-  <span class="text-[10px] font-bold text-emerald-700 mt-1" id="import-image-file-count">ยังไม่ได้เลือกรูป</span>
-  <div class="mt-2 w-full rounded-xl bg-white border border-emerald-100 p-2 text-[9px] text-slate-500"><b class="text-emerald-700">ขั้นตอน:</b> 1 เลือก Excel → 2 เลือกรูป → 3 วิเคราะห์ → 4 ตรวจสอบ → 5 นำเข้า</div>
-</div>
-<div class="flex flex-col">
-<textarea class="w-full flex-1 p-3 border rounded-xl text-xs font-mono outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" id="command-input" placeholder="หรือวางข้อความคั่นด้วยลูกน้ำ (CSV) ที่นี่... (รองรับเฉพาะขนาดหลัก ถ้าต้องการนำเข้าตัวเลือกแบ่งขายด้วย ให้ใช้วิธีอัปโหลดไฟล์ Excel/CSV ทางซ้ายแทน)
-ลำดับ: ชื่อสินค้า, ขนาด, หมวดหมู่, บาร์โค้ด, ทุน, ขาย, สต็อก, ขั้นต่ำ
-ตัวอย่าง: ท่อ PVC สีฟ้า, 1/2 นิ้ว, ท่อ &amp; ข้อต่อ, 8850001, 35, 55, 120, 25"></textarea>
-<button class="w-full mt-2 py-2 bg-indigo-600 text-white rounded-xl font-bold text-xs btn-touch" onclick="window.processCommandText()">ประมวลผลข้อความ</button>
-</div>
-</div>
-<div class="hidden bg-indigo-50/50 p-4 border border-indigo-100 rounded-2xl mb-4 text-xs" id="import-mapping-sec">
-<h4 class="font-bold text-indigo-900 mb-3">🛠️ จับคู่คอลัมน์จากไฟล์ที่อัปโหลด</h4>
-<p class="text-[10px] text-indigo-800/70 mb-3">💡 ไฟล์ที่ส่งออกจากปุ่ม "📊 Excel" ในหน้าคลังสินค้าจะจับคู่คอลัมน์ให้อัตโนมัติทุกคอลัมน์ (รวมขนาด/หมวดหมู่/ตัวเลือกแบ่งขาย) — ไม่ต้องจับคู่มือ</p>
-<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 text-slate-800" id="mapping-selectors-grid"></div>
-<button class="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs btn-touch" onclick="window.applyColumnMappingAndAnalyze()">วิเคราะห์และจำลองการนำเข้า</button>
-</div>
-<div class="hidden flex justify-between items-center mb-2 bg-slate-100 p-2 rounded-xl text-xs" id="preview-actions-bar">
-<div class="text-[10px] font-bold text-slate-600" id="import-stats"></div>
-<div class="flex gap-2">
-<button class="px-2.5 py-1 bg-white hover:bg-slate-50 rounded-lg text-[9px] font-bold border btn-touch" onclick="window.selectOnlyValidImports()">ลบแถวที่ผิดพลาดทั้งหมดออก</button>
-</div>
-</div>
-<p class="hidden text-[9px] text-slate-400 mb-2" id="import-hint">🟥 ผิดพลาด (ต้องแก้ก่อนถึงจะนำเข้าได้)   🟨 มีคำเตือน (นำเข้าได้แต่ควรตรวจสอบ)   ⬜ พร้อมนำเข้า — คลิกค่าไหนในตารางก็แก้ไขได้ทันที</p>
-<div class="relative flex-1 min-h-[250px] bg-slate-50 rounded-2xl overflow-auto border border-slate-200">
-<div class="w-full text-xs" id="import-preview-area"></div>
-</div>
-<div class="hidden mt-3" id="integrated-image-progress">
-  <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden"><div id="integrated-image-bar" class="bg-violet-600 h-2 rounded-full" style="width:0%"></div></div>
-  <pre id="integrated-image-log" class="hidden mt-2 text-[9px] bg-slate-50 border rounded-xl p-2 max-h-28 overflow-auto whitespace-pre-wrap text-slate-600"></pre>
-</div>
-<div class="sticky bottom-0 z-20 flex gap-2 mt-6 border-t pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur">
-<button class="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-2xl font-bold btn-touch text-xs" onclick="window.closeModal('modal-command')">ยกเลิก</button>
-<button class="flex-1 py-3.5 bg-emerald-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs hidden" id="btn-confirm-import" onclick="window.confirmImportData()">นำเข้าสินค้า</button>
-<button class="flex-[1.35] py-3.5 bg-violet-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-xs hidden" id="btn-confirm-import-with-images" onclick="window.enableIntegratedProductImageImport()">📦🖼️ นำเข้าสินค้า + รูป</button>
-</div>
-</div>
-</div>
-<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-cleanup-images">
-<div class="bg-white w-full max-w-3xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
-<div class="flex justify-between items-center mb-4 border-b pb-3">
-<h3 class="text-xl font-black text-slate-800">🧹 ล้างรูปที่ไม่ได้ใช้แล้ว</h3>
-<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-cleanup-images')">✕</button>
-</div>
-<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
-          หารูปที่อัปโหลดไว้ใน Supabase Storage แต่ตอนนี้<b>ไม่มีสินค้าตัวไหนใช้อยู่แล้ว</b> (เช่น หลังจากรวมสินค้าที่เคยแยกการ์ดกันเป็นกลุ่มเดียว รูปของตัวที่ถูกรวมจะเหลือค้างไว้เฉยๆ) ลบได้อย่างปลอดภัยเพื่อประหยัดพื้นที่ — สินค้าที่ยังใช้รูปอยู่จะไม่ถูกแตะ
-        </p>
-<button class="bg-rose-500 text-white px-4 py-2 rounded-xl font-bold text-xs btn-touch shadow-md mb-4 self-start" onclick="window.scanOrphanedImages()">🔍 เริ่มสแกน</button>
-<div class="space-y-3" id="cleanup-images-results">
-<p class="text-center text-slate-400 text-xs py-10">กด "เริ่มสแกน" เพื่อหารูปที่ไม่มีสินค้าใช้แล้ว</p>
-</div>
-</div>
-</div>
-<div class="fixed inset-0 z-[160] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-quick-cat-edit">
-<div class="bg-white w-full max-w-sm rounded-[2rem] p-6 shadow-2xl flex flex-col max-h-[85vh]">
-<div class="flex justify-between items-center mb-3 border-b pb-2">
-<h3 class="text-sm font-black text-slate-800">📁 แก้ไขหมวดหมู่</h3>
-<button class="text-slate-400 font-bold hover:text-rose-500 text-lg btn-touch" onclick="window.closeModal('modal-quick-cat-edit')">✕</button>
-</div>
-<p class="text-xs font-bold text-indigo-600 mb-3" id="quick-cat-edit-product-name"></p>
-<p class="text-[10px] text-slate-400 mb-2">ติ๊กได้หลายหมวดหมู่ (สินค้าอยู่ได้มากกว่า 1 หมวด)</p>
-<div class="space-y-1 overflow-y-auto flex-1 mb-3" id="quick-cat-edit-list"></div>
-<button class="w-full py-3 bg-indigo-600 text-white rounded-2xl font-bold text-sm btn-touch" onclick="window.saveQuickCategoryEdit()">บันทึก</button>
-</div>
-</div>
-<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-run-code">
-<div class="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
-<div class="flex justify-between items-center mb-4 border-b pb-3">
-<h3 class="text-xl font-black text-slate-800">🔢 รันรหัสสินค้าอัตโนมัติ</h3>
-<button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-run-code')">✕</button>
-</div>
-<p class="text-[11px] text-slate-500 mb-4 leading-relaxed">
-          ตั้งรหัสสินค้า (SKU) ให้เรียงลำดับอัตโนมัติทั้งร้าน เรียงตามชื่อสินค้า ก-ฮ เหมาะสำหรับพิมพ์ป้ายราคา/จัดชั้นวางให้เป็นระบบ
-        </p>
-<div class="space-y-3 mb-4">
-<div>
-<label class="text-[10px] font-bold text-slate-500 block mb-1">คำนำหน้ารหัส (ถ้ามี)</label>
-<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-prefix" placeholder="เช่น A- หรือเว้นว่างไว้ก็ได้" type="text"/>
-</div>
-<div class="grid grid-cols-2 gap-3">
-<div>
-<label class="text-[10px] font-bold text-slate-500 block mb-1">เริ่มจากเลข</label>
-<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-start" min="0" type="number" value="1"/>
-</div>
-<div>
-<label class="text-[10px] font-bold text-slate-500 block mb-1">จำนวนหลัก (เติม 0)</label>
-<input class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-digits" max="8" min="1" type="number" value="4"/>
-</div>
-</div>
-<div>
-<label class="text-[10px] font-bold text-slate-500 block mb-1">ขอบเขต</label>
-<select class="w-full bg-slate-50 border p-3 rounded-xl font-bold outline-none text-slate-800 text-xs" id="run-code-scope">
-<option value="MISSING">เฉพาะสินค้าที่ยังไม่มีรหัส (ปลอดภัย ไม่แตะของเดิม)</option>
-<option value="ALL">ทั้งหมด (เขียนทับรหัสเดิมทุกตัว)</option>
-</select>
-</div>
-<div class="bg-teal-50 border border-teal-200 rounded-xl p-3 text-[10px] text-teal-700">
-            ตัวอย่างผลลัพธ์: <b id="run-code-preview">A-0001, A-0002, A-0003 ...</b>
-</div>
-</div>
-<button class="w-full py-4 bg-teal-600 text-white rounded-2xl font-bold shadow-xl btn-touch text-sm" onclick="window.runAutoProductCode()">▶️ เริ่มรันรหัส</button>
-</div>
-</div>
-<div class="fixed inset-0 z-[140] bg-slate-900/80 flex items-center justify-center p-4 hidden" id="modal-command">
-<div class="bg-white w-full max-w-4xl rounded-[3rem] p-8 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto no-scrollbar">
-<div class="flex justify-between items-center mb-4 border-b pb-3">
 <h3 class="text-xl font-black text-slate-800">⚡ นำเข้าสินค้าด่วนด้วย Excel / CSV</h3>
 <button class="text-slate-400 font-bold hover:text-rose-500 text-xl btn-touch" onclick="window.closeModal('modal-command')">✕</button>
 </div>
@@ -1920,12 +1562,5 @@ body{
 
 
 
-
-
-
-
-
-
-
-<script defer src="js/00-error-overlay.js"></script><script defer src="js/00-failsafe.js"></script><script defer src="js/10-product-code.js"></script><script defer src="js/11-image-cleanup.js"></script><script defer src="js/12-gestures.js"></script><script defer src="js/14-documents.js"></script><script defer src="js/01-core.js"></script><script defer src="js/02-sales-stock.js"></script><script defer src="js/03-admin-backup.js"></script><script defer src="js/04-supabase.js"></script><script defer src="js/05-transaction-monitoring.js"></script><script defer src="js/15-cost-control.js"></script><script defer src="js/13-bulk-image-import.js"></script><script defer src="js/17-v3-ui.js"></script></body>
+<script src="js/00-error-overlay.js"></script><script src="js/00-failsafe.js"></script><script src="js/10-product-code.js"></script><script src="js/11-image-cleanup.js"></script><script src="js/12-gestures.js"></script><script src="js/13-bulk-image-import.js"></script><script src="js/14-documents.js"></script><script src="js/01-core.js"></script><script src="js/02-sales-stock.js"></script><script src="js/03-admin-backup.js"></script><script src="js/04-supabase.js"></script><script src="js/05-transaction-monitoring.js"></script></body>
 </html>

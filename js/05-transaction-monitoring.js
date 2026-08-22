@@ -266,7 +266,7 @@
     const logs = window.getSystemErrorLogs();
     const badgeEl = document.getElementById('device-id-badge');
     const errorEntry = {
-      id: 'ERR-' + crypto.randomUUID(),
+      id: 'ERR-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 5),
       type: type || 'GENERIC_ERROR',
       message: message || 'Unknown error occurred',
       stackTrace: (stackTrace || '').substring(0, 1000), // Cap length

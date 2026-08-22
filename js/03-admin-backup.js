@@ -33,8 +33,7 @@
         { key: 'stock', label: 'จำนวนสต็อก' },
         { key: 'minStock', label: 'จุดสั่งซื้อขั้นต่ำ' },
         { key: 'fractionName', label: 'ชื่อหน่วยแบ่งขาย' },
-        { key: 'fractionMultiplier', label: 'อัตราส่วนแบ่งขาย' },
-        { key: 'imageFile', label: 'ไฟล์รูปสินค้า' }
+        { key: 'fractionMultiplier', label: 'อัตราส่วนแบ่งขาย' }
       ];
 
       function checkHeaderMatch(header, key) {
@@ -50,7 +49,7 @@
         const exactHeaders = {
           name: 'ชื่อสินค้า', code: 'รหัสสินค้า', rowType: 'ประเภทแถว', size: 'ขนาด', category: 'หมวดหมู่',
           groupName: 'กลุ่มสินค้า', barcode: 'บาร์โค้ด', cost: 'ทุน', price: 'ราคาขาย', stock: 'สต็อก',
-          minStock: 'สต็อกขั้นต่ำ', fractionName: 'ชื่อหน่วยแบ่งขาย', fractionMultiplier: 'อัตราส่วนแบ่งขาย', imageFile: 'ไฟล์รูปสินค้า'
+          minStock: 'สต็อกขั้นต่ำ', fractionName: 'ชื่อหน่วยแบ่งขาย', fractionMultiplier: 'อัตราส่วนแบ่งขาย'
         };
         const exactMatchKey = Object.keys(exactHeaders).find(k => exactHeaders[k].toLowerCase() === header);
         if (exactMatchKey) return exactMatchKey === key;
@@ -68,8 +67,7 @@
           stock: ["สต็อก", "stock", "จำนวน", "คงเหลือ", "qty", "quantity", "ชิ้น"],
           minStock: ["ขั้นต่ำ", "min", "reorder", "เกณฑ์", "เตือน"],
           fractionName: ["ชื่อหน่วยแบ่งขาย", "หน่วยแบ่งขาย", "fraction name", "fractionname"],
-          fractionMultiplier: ["อัตราส่วนแบ่งขาย", "อัตราส่วน", "multiplier", "fraction"],
-          imageFile: ["ไฟล์รูปสินค้า", "รูปสินค้า", "image file", "image", "รูป"]
+          fractionMultiplier: ["อัตราส่วนแบ่งขาย", "อัตราส่วน", "multiplier", "fraction"]
         };
         // ถ้าหัวคอลัมน์เข้าเงื่อนไข "สต็อกขั้นต่ำ" (มีคำว่า "ขั้นต่ำ") ให้ตัดสิทธิ์ฟิลด์ "สต็อก" ทั่วไป
         // ออกก่อน เพราะ "สต็อกขั้นต่ำ" มีคำว่า "สต็อก" ปนอยู่ด้วยเช่นกัน (ทายคำซ้อนกัน)
@@ -224,7 +222,6 @@
           let fractionName = mapping.fractionName !== null ? (row[mapping.fractionName] || '').toString().trim() : '';
           fractionName = window.repairThaiText(fractionName);
           const fractionMultiplierP = parseImportNumber(mapping.fractionMultiplier !== null ? row[mapping.fractionMultiplier] : undefined, 0);
-          const imageFile = mapping.imageFile !== null ? (row[mapping.imageFile] || '').toString().trim() : '';
 
           pendingImportData.push({
             _rowId: 'R' + (rowIdCounter++),
@@ -235,7 +232,7 @@
             price: priceP.value, priceRaw: priceP,
             stock: stockP.value, stockRaw: stockP,
             minStock: minP.value, minRaw: minP,
-            fractionName, fractionMultiplier: fractionMultiplierP.value, fractionMultiplierRaw: fractionMultiplierP, imageFile
+            fractionName, fractionMultiplier: fractionMultiplierP.value, fractionMultiplierRaw: fractionMultiplierP
           });
         });
 
@@ -614,14 +611,6 @@
               persist(); renderSaleHome(); window.renderStock(); closeModal('modal-command');
               logTransaction('PRODUCT_IMPORT', { importedCount: validCount, mainCount: mainItems.length, fractionCount: importedFractionCount, skippedCount: pendingImportData.length - validCount });
               showToast(`นำเข้าข้อมูลสินค้าสำเร็จ ${mainItems.length} ขนาด${importedFractionCount > 0 ? ` + ${importedFractionCount} ตัวเลือกแบ่งขาย` : ''}`);
-              if (typeof window.__afterProductImport === 'function') {
-                const afterImport = window.__afterProductImport;
-                window.__afterProductImport = null;
-                Promise.resolve(afterImport(validItems)).catch(err => {
-                  console.error('Post-import image attachment failed', err);
-                  showAlert('นำเข้ารูปภาพไม่สมบูรณ์', err.message || String(err), true);
-                });
-              }
             }
           );
         });
@@ -700,7 +689,6 @@
         const pin = document.getElementById('user-pin').value.trim();
         const loginId = (document.getElementById('user-login-id')?.value || '').trim().toLowerCase();
         const loginPassword = document.getElementById('user-login-password')?.value || '';
-        const loginEmail = (document.getElementById('user-login-email')?.value || '').trim().toLowerCase();
 
         if (!name) return showAlert('ข้อมูลไม่ครบ', 'กรุณาระบุชื่อผู้ใช้งาน', true);
         if (pin && !/^\d{4}$/.test(pin)) return showAlert('PIN ไม่ถูกต้อง', 'PIN อนุมัติผู้จัดการต้องเป็นตัวเลข 4 หลักเท่านั้น (เว้นว่างไว้ได้ถ้าไม่ต้องการ)', true);
@@ -718,15 +706,15 @@
           if ((db.users || []).some(u => u.id === loginId)) {
             return showAlert('User ID ซ้ำ', 'มีผู้ใช้งาน User ID นี้อยู่แล้ว กรุณาเลือก ID อื่น', true);
           }
-          if (!loginPassword || loginPassword.length < 8) {
-            return showAlert('รหัสผ่านไม่ถูกต้อง', 'กรุณาระบุรหัสผ่านเข้าระบบอย่างน้อย 8 ตัวอักษร', true);
+          if (!loginPassword || loginPassword.length < 4) {
+            return showAlert('รหัสผ่านไม่ถูกต้อง', 'กรุณาระบุรหัสผ่านเข้าระบบอย่างน้อย 4 ตัวอักษร', true);
           }
 
           const passwordSalt = generatePinSalt();
           const passwordHash = await hashPassword(loginPassword, passwordSalt);
 
           const newUser = {
-            id: loginId, name, role: 'staff', email: loginEmail || '',
+            id: loginId, name, role: 'staff',
             passwordHash, passwordSalt,
             createdAt: new Date().toISOString()
           };
@@ -741,9 +729,8 @@
           const u = db.users.find(x => x.id === id);
           if (!u) return;
           u.name = name;
-          if (loginEmail) u.email = loginEmail;
           if (loginPassword) {
-            if (loginPassword.length < 8) return showAlert('รหัสผ่านไม่ถูกต้อง', 'รหัสผ่านเข้าระบบต้องมีอย่างน้อย 4 ตัวอักษร', true);
+            if (loginPassword.length < 4) return showAlert('รหัสผ่านไม่ถูกต้อง', 'รหัสผ่านเข้าระบบต้องมีอย่างน้อย 4 ตัวอักษร', true);
             const passwordSalt = generatePinSalt();
             u.passwordHash = await hashPassword(loginPassword, passwordSalt);
             u.passwordSalt = passwordSalt;
@@ -755,16 +742,7 @@
         }
 
         persist();
-        if (isNew && loginEmail && typeof window.provisionStoreMemberAuth === 'function') {
-          try {
-            const cloudMember = await window.provisionStoreMemberAuth(loginEmail, loginPassword, newUser.role);
-            if (cloudMember?.userId) { newUser.supabaseAuthUserId = cloudMember.userId; persist(); }
-          } catch (e) {
-            // Do not lose the local member record; clearly mark cloud provisioning failure.
-            showToast('⚠️ สร้างสมาชิกในเครื่องแล้ว แต่เชื่อมบัญชี Cloud ไม่สำเร็จ: ' + (e.message || e));
-          }
-        }
-        logTransaction(isNew ? 'USER_CREATE' : 'USER_EDIT', { name, email: loginEmail || null });
+        logTransaction(isNew ? 'USER_CREATE' : 'USER_EDIT', { name });
         renderUserManagerList();
         window.openUserForm(null);
         showToast('บันทึกข้อมูลผู้ใช้งานสำเร็จ');
@@ -824,7 +802,7 @@
         const n2 = document.getElementById('setting-pin-confirm').value;
         
         const curHash = await hashPIN(cur, db.pinSalt);
-        if(db.pinHash && curHash !== db.pinHash) { const legacy = typeof hashPINLegacy === 'function' ? await hashPINLegacy(current, db.pinSalt) : ''; if (legacy !== db.pinHash) return showAlert("ผิดพลาด", "รหัส PIN ปัจจุบันไม่ถูกต้อง", true); }
+        if(db.pinHash && curHash !== db.pinHash) return showAlert("ผิดพลาด", "รหัส PIN ปัจจุบันไม่ถูกต้อง", true);
         // Require exactly 4 digits (0-9 only) — the lock screen keypad can only ever type
         // digits, so a PIN containing letters/symbols would permanently lock everyone out.
         if(!/^\d{4}$/.test(n1)) return showAlert("ผิดพลาด", "PIN ใหม่ต้องเป็นตัวเลข 4 หลักเท่านั้น (0-9)", true);
@@ -1264,7 +1242,7 @@ async function saveLog() {
 async function logTransaction(action, details = {}, opts = {}) {
   const log = await loadLog();
   const entry = {
-    id: 'AL' + crypto.randomUUID().replace(/-/g,'').toUpperCase(),
+    id: 'AL' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substr(2, 4).toUpperCase(),
     ts: new Date().toISOString(),
     action,
     actor: opts.actor || currentUserName || (window.__deviceId || 'unknown'),
@@ -1435,25 +1413,6 @@ window.autoRepairIfNeeded = autoRepairIfNeeded;
 
 
 const MIGRATIONS = {
-  2: {
-    description: 'เพิ่มฟิลด์สมาชิก Cloud และโครงสร้างต้นทุน/Sync รุ่น v2.3',
-    migrate(db) {
-      db.users = Array.isArray(db.users) ? db.users : [];
-      db.users.forEach(u => { if (u.email === undefined) u.email = ''; });
-      db.stockMovements = Array.isArray(db.stockMovements) ? db.stockMovements : [];
-      db.purchaseHistory = Array.isArray(db.purchaseHistory) ? db.purchaseHistory : [];
-      db.costHistory = Array.isArray(db.costHistory) ? db.costHistory : [];
-      db.saleTransactions = Array.isArray(db.saleTransactions) ? db.saleTransactions : [];
-      db.settings = db.settings || {};
-      if (db.settings.minMarginPct === undefined) db.settings.minMarginPct = 20;
-      Object.values(db.products || {}).forEach(p => (p.variants || []).forEach(v => {
-        const c = roundAmt(v.cost || 0);
-        if (v.lastCost == null) v.lastCost = c;
-        if (v.currentCost == null) v.currentCost = c;
-        if (v.minMarginPct == null) v.minMarginPct = db.settings.minMarginPct;
-      }));
-    }
-  },
   // Example shape for the future:
   // 1: {
   //   description: "เพิ่มฟิลด์ suppliers[].terms",
@@ -1673,129 +1632,3 @@ window.openAuditLogModal = function () {
   document.getElementById('modal-audit-log').classList.add('flex');
   renderAuditLogList();
 };
-
-
-// ==========================================
-// DANGER ZONE ACTIONS
-// ==========================================
-// These handlers are intentionally defined on window because the admin UI
-// invokes them from inline onclick attributes.  Keep the destructive action
-// behind a typed confirmation and always create a backup first.
-(function () {
-  'use strict';
-
-  function openDangerModal(title, desc, phrase, action) {
-    dangerConfirmAction = action;
-    dangerConfirmPhrase = phrase;
-    const titleEl = document.getElementById('danger-confirm-title');
-    const descEl = document.getElementById('danger-confirm-desc');
-    const hintEl = document.getElementById('danger-confirm-phrase-hint');
-    const input = document.getElementById('danger-confirm-input');
-    const btn = document.getElementById('danger-confirm-btn');
-    if (titleEl) titleEl.innerText = title;
-    if (descEl) descEl.innerText = desc;
-    if (hintEl) hintEl.innerText = phrase;
-    if (input) input.value = '';
-    if (btn) {
-      btn.disabled = true;
-      btn.classList.add('bg-slate-300', 'cursor-not-allowed');
-      btn.classList.remove('bg-rose-600', 'hover:bg-rose-700');
-    }
-    const modal = document.getElementById('modal-danger-confirm');
-    if (modal) {
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-      setTimeout(() => input && input.focus(), 50);
-    }
-  }
-
-  window.checkDangerConfirmInput = function () {
-    const input = document.getElementById('danger-confirm-input');
-    const btn = document.getElementById('danger-confirm-btn');
-    const ok = !!input && input.value.trim() === dangerConfirmPhrase;
-    if (btn) {
-      btn.disabled = !ok;
-      btn.classList.toggle('bg-slate-300', !ok);
-      btn.classList.toggle('cursor-not-allowed', !ok);
-      btn.classList.toggle('bg-rose-600', ok);
-      btn.classList.toggle('hover:bg-rose-700', ok);
-    }
-    return ok;
-  };
-
-  window.openClearProductsModal = function () {
-    openDangerModal(
-      'ล้างข้อมูลสินค้าทั้งหมด?',
-      'ระบบจะสำรองข้อมูลปัจจุบันก่อน แล้วลบสินค้า/ตัวเลือกสินค้าและประวัติต้นทุนที่ผูกกับสินค้าออก การขาย ลูกค้า ผู้ใช้ และการตั้งค่าร้านจะไม่ถูกลบ',
-      'ล้างสินค้า',
-      async function () {
-        const backupOk = typeof downloadJSONFile === 'function'
-          ? downloadJSONFile(db, 'SmartPOS_Before_ClearProducts')
-          : false;
-        if (!backupOk) throw new Error('ไม่สามารถสร้างไฟล์สำรองข้อมูลก่อนล้างสินค้าได้');
-
-        const count = Object.keys(db.products || {}).length;
-        db.products = {};
-        db.categories = [];
-        db.stockMovements = [];
-        db.purchaseHistory = [];
-        db.costHistory = [];
-        db.saleTransactions = Array.isArray(db.saleTransactions) ? db.saleTransactions : [];
-        db.syncQueue = Array.isArray(db.syncQueue) ? db.syncQueue : [];
-        db.pendingSyncs = Array.isArray(db.pendingSyncs) ? db.pendingSyncs : [];
-        db.counters.product = 1;
-        db.counters.category = 1;
-        db.counters.variant = 1;
-        db.counters.barcode = 1;
-        persist();
-        if (typeof logTransaction === 'function') await logTransaction('DB_CLEAR_PRODUCTS', { count });
-        if (typeof window.renderAll === 'function') window.renderAll();
-        if (typeof window.showToast === 'function') window.showToast(`ล้างข้อมูลสินค้า ${count} รายการแล้ว`);
-      }
-    );
-  };
-
-  window.openFullResetModal = function () {
-    openDangerModal(
-      'รีเซ็ตระบบทั้งหมด?',
-      'ระบบจะสำรองข้อมูลปัจจุบันก่อน แล้วคืนฐานข้อมูลของร้านกลับเป็นค่าเริ่มต้น ข้อมูลสินค้า ยอดขาย ลูกค้า ซัพพลายเออร์ กะ และข้อมูลธุรกรรมในเครื่องจะถูกลบทั้งหมด',
-      'รีเซ็ตทั้งหมด',
-      async function () {
-        const backupOk = typeof downloadJSONFile === 'function'
-          ? downloadJSONFile(db, 'SmartPOS_Before_FullReset')
-          : false;
-        if (!backupOk) throw new Error('ไม่สามารถสร้างไฟล์สำรองข้อมูลก่อนรีเซ็ตได้');
-
-        if (typeof window.resetDatabaseToDefaults !== 'function') {
-          throw new Error('ไม่พบตัวจัดการรีเซ็ตฐานข้อมูล');
-        }
-        window.resetDatabaseToDefaults();
-        persist();
-        if (typeof logTransaction === 'function') {
-          // The reset itself is intentionally logged only when an external audit
-          // store is available; the local DB audit history is reset by design.
-          try { await logTransaction('DB_RESET', { source: 'danger_zone' }); } catch (_) {}
-        }
-        if (typeof window.renderAll === 'function') window.renderAll();
-        if (typeof window.showToast === 'function') window.showToast('รีเซ็ตระบบเรียบร้อยแล้ว');
-      }
-    );
-  };
-
-  window.runDangerConfirmAction = async function () {
-    const input = document.getElementById('danger-confirm-input');
-    if (!input || input.value.trim() !== dangerConfirmPhrase || typeof dangerConfirmAction !== 'function') return;
-    const action = dangerConfirmAction;
-    dangerConfirmAction = null;
-    dangerConfirmPhrase = '';
-    window.closeModal('modal-danger-confirm');
-    try {
-      await action();
-    } catch (e) {
-      console.error('Danger-zone action failed:', e);
-      if (typeof window.showAlert === 'function') {
-        window.showAlert('ดำเนินการไม่สำเร็จ', e?.message || 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ', true);
-      }
-    }
-  };
-})();

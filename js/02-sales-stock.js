@@ -17,20 +17,9 @@
       // emoji icon span — built via real DOM APIs (not string concatenation),
       // so there's never a moment where both the broken image AND the emoji
       // exist in the DOM at once, and no HTML-escaping edge cases to get wrong.
-      window.handleProductImgError = async function(imgEl) {
+      window.handleProductImgError = function(imgEl) {
         const emoji = imgEl.dataset.fallbackEmoji || '📦';
         const pid = imgEl.dataset.pid || '';
-        if (pid && !imgEl.dataset.retrying) {
-          imgEl.dataset.retrying = '1';
-          const ok = typeof window.refreshProductImageUrl === 'function'
-            ? await window.refreshProductImageUrl(pid)
-            : false;
-          const fresh = db?.products?.[pid]?.imageUrl;
-          if (ok && fresh) {
-            imgEl.src = fresh;
-            return;
-          }
-        }
         const span = document.createElement('span');
         span.className = 'inline-edit-cell';
         span.textContent = emoji;
@@ -245,16 +234,11 @@
             const vMin = roundStock(parseFloat(row.querySelector('.v-min').value) || 0);
             const vBarcode = row.querySelector('.v-barcode').value.trim() || ('AUTO-' + db.counters.barcode++);
             if (vCost < 0 || vPrice < 0 || vStock < 0 || vMin < 0) validationError = 'negative';
-            const existingVariant = db.products[id]?.variants?.find(x => x.id === vid);
             variants.push({
               id: vid,
               sizeName: vSize,
               barcode: vBarcode,
               cost: vCost,
-              currentCost: roundAmt(existingVariant?.currentCost ?? vCost),
-              lastCost: roundAmt(existingVariant?.lastCost ?? vCost),
-              costUpdatedAt: existingVariant?.costUpdatedAt || new Date().toISOString(),
-              minMarginPct: Number(existingVariant?.minMarginPct ?? db.settings?.minMarginPct ?? 20) || 20,
               price: vPrice,
               stock: vStock,
               minStock: vMin,
@@ -678,18 +662,7 @@
           } else {
             newVal = (newVal || '').trim() || currentValue;
           }
-          const oldObjValue = obj[field];
           obj[field] = newVal;
-          if (field === 'cost' && type === 'variant') {
-            const oldCost = roundAmt(obj.currentCost ?? oldObjValue ?? 0);
-            const newCost = roundAmt(newVal);
-            obj.lastCost = newCost;
-            obj.currentCost = newCost;
-            obj.costUpdatedAt = new Date().toISOString();
-            if (typeof window.recordCostChange === 'function' && oldCost !== newCost) {
-              window.recordCostChange({ productId, variantId, oldCost, newCost, refId: 'MANUAL-COST-' + Date.now() });
-            }
-          }
 
           if (typeof window.decoupledPersist === 'function') {
             window.decoupledPersist(['products']);
@@ -701,13 +674,8 @@
           // แล้วต่ำกว่าทุน — ไม่บล็อกการบันทึก (ค่าที่แก้บันทึกไปแล้ว) แต่แจ้งให้รู้ตัวทันที
           // เพื่อกลับมาแก้ไขได้ทันหากพิมพ์ผิด
           if (field === 'price' && type === 'variant') {
-            const guard = typeof window.checkSellingPriceGuard === 'function' ? window.checkSellingPriceGuard(productId, variantId, obj.price) : null;
-            const role = String((typeof currentUserRole !== 'undefined' ? currentUserRole : '') || db.users?.find(u => u.id === currentUserId)?.role || 'staff');
-            if (guard && obj.price > 0 && obj.price < guard.minPrice && !['owner','manager'].includes(role)) {
-              obj.price = oldObjValue;
-              showToast(`⛔ ไม่อนุญาตให้ตั้งราคาต่ำกว่าราคาป้องกัน (ทุนล่าสุด ${formatMoney(guard.cost)} / ขั้นต่ำ ${formatMoney(guard.minPrice)}) ต้องให้ผู้จัดการอนุมัติ`);
-            } else if (guard && obj.price > 0 && obj.price < guard.minPrice) {
-              showToast(`⚠️ ผู้จัดการอนุมัติราคาต่ำกว่าราคาขั้นต่ำ ${formatMoney(guard.minPrice)}`);
+            if (obj.price > 0 && obj.cost > 0 && obj.price < obj.cost) {
+              showToast(`⚠️ ราคาขาย ${formatMoney(obj.price)} ต่ำกว่าทุน ${formatMoney(obj.cost)} — ขาดทุน!`);
             }
           } else if (field === 'fractionPrice' && type === 'fraction') {
             const v = p.variants.find(x => x.id === variantId);
@@ -743,12 +711,7 @@
                 const v = p.variants.find(x => x.id === variantId);
                 if (v) {
                   if (draft.qty !== '' && draft.qty !== undefined && !isNaN(parseFloat(draft.qty))) {
-                    const before = roundStock(v.stock);
-                    const after = roundStock(parseFloat(draft.qty));
-                    v.stock = after;
-                    if (typeof window.recordStockMovement === 'function' && before !== after) {
-                      window.recordStockMovement({ productId: p.id, variantId, qty: roundStock(after - before), unitCost: typeof window.getCurrentCost === 'function' ? window.getCurrentCost(p.id, variantId) : v.cost, type: 'COUNT', refId: 'COUNT-' + Date.now(), note: draft.note || 'ตรวจนับสต็อก' });
-                    }
+                    v.stock = roundStock(parseFloat(draft.qty));
                   }
                   if (draft.note) v.lastCountNote = draft.note;
                   break;
@@ -1456,7 +1419,7 @@
             const item = b.items.find(x => x.cartKey === key);
             if (item) {
               refundTotal = roundAmt(refundTotal + (qtyToRefund * roundAmt(item.price)));
-              refundCost = roundAmt(refundCost + (qtyToRefund * (roundAmt(item.costAtSale ?? item.cost) || 0)));
+              refundCost = roundAmt(refundCost + (qtyToRefund * (roundAmt(item.cost) || 0)));
               refundActions.push({ item, qtyToRefund });
             }
           }
@@ -1522,11 +1485,7 @@
           if (p) {
             const v = p.variants.find(x => x.id === item.variantId);
             if (v) {
-              const restoreQty = roundStock(qtyToRefund * (parseFloat(item.multiplier) || 1));
-              v.stock = roundStock(v.stock + restoreQty);
-              if (typeof window.recordStockMovement === 'function') {
-                window.recordStockMovement({ productId: item.id, variantId: item.variantId, qty: restoreQty, unitCost: roundAmt(item.costAtSale ?? item.cost), type: 'REFUND', refId: b.id, note: reason });
-              }
+              v.stock = roundStock(v.stock + (qtyToRefund * (parseFloat(item.multiplier) || 1)));
             }
           }
         });
@@ -1627,25 +1586,6 @@
         const margin = totalRev > 0 ? (netProfit / totalRev) * 100 : 0;
         document.getElementById('report-estimated-profit').innerText = formatMoney(netProfit);
         document.getElementById('report-profit-margin').innerText = `Margin กำไรสุทธิ: ${margin.toFixed(1)}%`;
-
-        // Historical gross profit uses the immutable cost snapshot stored on each sale item.
-        // It must never be recalculated from the product's current/latest cost.
-        let historicalGrossRevenue = 0;
-        let historicalGrossCost = 0;
-        db.bills.forEach(b => {
-          (b.items || []).forEach(item => {
-            const soldQty = Math.max(0, Number(item.qty || 0) - Number(item.refundedQty || 0));
-            const costAtSale = roundAmt(item.costAtSale ?? item.cost ?? 0);
-            historicalGrossRevenue = roundAmt(historicalGrossRevenue + soldQty * roundAmt(item.price || 0));
-            historicalGrossCost = roundAmt(historicalGrossCost + soldQty * costAtSale);
-          });
-        });
-        const historicalGrossProfit = roundAmt(historicalGrossRevenue - historicalGrossCost);
-        const grossMargin = historicalGrossRevenue > 0 ? (historicalGrossProfit / historicalGrossRevenue) * 100 : 0;
-        const gpEl = document.getElementById('report-gross-profit');
-        const gmEl = document.getElementById('report-gross-margin');
-        if (gpEl) gpEl.innerText = formatMoney(historicalGrossProfit);
-        if (gmEl) gmEl.innerText = `Gross Margin: ${grossMargin.toFixed(1)}%`;
 
         const deductเหมา = roundAmt(totalRev * 0.60);
         const deductจริง = totalOperationalExpense;
@@ -2297,24 +2237,19 @@
           if(db.products[item.productId]) {
             const v = db.products[item.productId].variants.find(x => x.id === item.variantId);
             if(v) {
-              const oldCost = typeof window.getCurrentCost === 'function' ? window.getCurrentCost(item.productId, item.variantId) : roundAmt(v.cost);
-              const receivedQty = Math.max(0, Number(item.qty || 0));
-              v.stock = roundStock(v.stock + receivedQty);
-              // Policy: current remaining stock is revalued to the LATEST purchase cost.
-              // Historical sale costs are stored separately and are never changed by this operation.
+              const oldCost = v.cost;
+              v.stock = roundStock(v.stock + item.qty);
+              // เช็กรับสินค้าจากบิลจริง: ถ้าราคาทุนที่ระบุตอนรับของครั้งนี้ต่างจากราคาทุนเดิม
+              // ให้ปรับราคาทุนของสต็อกเดิมทั้งหมดเป็นราคาใหม่ทันที (ไม่ใช้ค่าเฉลี่ยถ่วงน้ำหนัก)
               if (roundAmt(item.cost) !== roundAmt(oldCost)) {
                 priceChanges.push({ name: item.productName, size: item.sizeName, oldCost, newCost: item.cost });
               }
-              if (typeof window.applyLatestCostToCurrentStock === 'function') {
-                window.applyLatestCostToCurrentStock(item.productId, item.variantId, item.cost, poId, { qty: receivedQty, supplierId });
-              } else {
-                v.cost = roundAmt(item.cost);
-                v.lastCost = roundAmt(item.cost);
-                v.currentCost = roundAmt(item.cost);
-              }
-              if (typeof window.recordStockMovement === 'function') {
-                window.recordStockMovement({ productId: item.productId, variantId: item.variantId, qty: receivedQty, unitCost: item.cost, type: 'RECEIVE', refId: poId, note: 'รับสินค้าจากซัพพลายเออร์' });
-              }
+              const oldStock = Math.max(0, Number(v.stock || 0));
+              const receivedQty = Math.max(0, Number(item.qty || 0));
+              const totalQty = oldStock + receivedQty;
+              v.cost = totalQty > 0
+                ? roundAmt(((oldStock * Number(oldCost || 0)) + (receivedQty * Number(item.cost || 0))) / totalQty)
+                : roundAmt(item.cost);
             }
           }
         });
@@ -2337,7 +2272,7 @@
           const list = priceChanges.map(c => `• ${c.name} (${c.size}): ${formatMoney(c.oldCost)} → ${formatMoney(c.newCost)} บาท`).join('\n');
           window.showAlert(
             "รับของเข้าสต็อกสำเร็จ — มีการปรับราคาทุน " + priceChanges.length + " รายการ",
-            "ราคาทุนที่รับจริงถูกบันทึกตามใบรับ และสต็อกปัจจุบันทั้งหมดใช้ทุนรับเข้าล่าสุดเพื่อควบคุมราคาขาย:\n" + list,
+            "ราคาทุนที่รับจริงถูกบันทึกตามใบรับ และทุนปัจจุบันถูกคำนวณแบบถัวเฉลี่ยเพื่อใช้ประเมินสต็อก:\n" + list,
             false
           );
         } else {
@@ -2572,9 +2507,6 @@
           if (v && item.stockBefore !== null && item.costBefore !== null) {
             v.stock = item.stockBefore;
             v.cost = item.costBefore;
-            v.lastCost = item.costBefore;
-            v.currentCost = item.costBefore;
-            v.costUpdatedAt = new Date().toISOString();
           }
         });
 
@@ -2867,25 +2799,8 @@ window.__pendingProductImageStoragePath = null;
         }
       }
 
-      async function ensureHtml5QrcodeLoaded() {
-        if (typeof Html5Qrcode !== 'undefined') return true;
-        if (window.__smartPosHtml5QrPromise) return window.__smartPosHtml5QrPromise;
-        window.__smartPosHtml5QrPromise = new Promise((resolve) => {
-          const script = document.createElement('script');
-          script.src = 'https://unpkg.com/html5-qrcode';
-          script.async = true;
-          script.onload = () => resolve(typeof Html5Qrcode !== 'undefined');
-          script.onerror = () => resolve(false);
-          document.head.appendChild(script);
-        });
-        return window.__smartPosHtml5QrPromise;
-      }
-
       async function startHtml5FallbackCamera() {
-        if (typeof Html5Qrcode === 'undefined') {
-          const loaded = await ensureHtml5QrcodeLoaded();
-          if (!loaded) return false;
-        }
+        if (typeof Html5Qrcode === 'undefined') return false;
         const reader = scannerReaderEl();
         if (!reader) return false;
         reader.innerHTML = '';

@@ -39,7 +39,7 @@
       window.naturalCompare = naturalCompare;
       const roundStock = (num) => Math.round((parseFloat(num) || 0) * 10000) / 10000;
       const formatMoney = (val) => "฿" + roundAmt(val).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-      const generateID = () => { try { return crypto.randomUUID().replace(/-/g, '').slice(0, 20).toUpperCase(); } catch (e) { const bytes = crypto.getRandomValues(new Uint8Array(12)); return Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase(); } };
+      const generateID = () => Date.now().toString(36).toUpperCase() + Math.random().toString(36).substr(2, 4).toUpperCase();
 
       // ==========================================
       // GLOBAL DOUBLE-SUBMIT GUARD
@@ -70,19 +70,19 @@
           .replace(/'/g, "&#039;");
       }
 
-      // PINs use PBKDF2 with a per-record salt. Legacy SHA-256 PIN hashes are still
-      // accepted once and can be migrated transparently after successful verification.
+      // Secure cryptographic SHA-256 Hashing for PINs.
+      // `salt`, when provided, is mixed into the hashed string so that two stores using the
+      // same PIN don't produce the same hash, and a leaked/exported database can't be
+      // attacked with a single precomputed 0000-9999 rainbow table.
+      // Backward compatible: if salt is falsy (older records created before this fix),
+      // it hashes the PIN alone, matching how the hash was originally computed.
       async function hashPIN(pin, salt) {
-        const enc = new TextEncoder();
-        const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
-        const bits = await crypto.subtle.deriveBits({ name:'PBKDF2', salt:enc.encode(String(salt || '')), iterations:180000, hash:'SHA-256' }, keyMaterial, 256);
-        return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('');
-      }
-      async function hashPINLegacy(pin, salt) {
-        const raw = salt ? `${salt}:${String(pin)}` : String(pin);
-        const data = new TextEncoder().encode(raw);
+        const encoder = new TextEncoder();
+        const raw = salt ? `${salt}:${pin.toString()}` : pin.toString();
+        const data = encoder.encode(raw);
         const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       }
 
       // Passwords use PBKDF2 rather than a single SHA-256 round. This is deliberately
@@ -232,7 +232,7 @@
       // ==========================================
       // DATABASE SCHEMAS
       // ==========================================
-      const SCHEMA_VERSION = 3;
+      const SCHEMA_VERSION = 2;
 
       const DB_DEFAULT = {
         schemaVersion: SCHEMA_VERSION,
@@ -329,9 +329,6 @@
       let pendingImportData = []; 
       let uploadedHeaders = []; 
       let uploadedRows = [];
-      // Current import rows accessor for optional post-import modules.
-      // Use a getter because pendingImportData is reassigned on each import.
-      window.getPendingImportData = function() { return pendingImportData; };
       let isSyncing = false; 
       let scanner = null;
       let isCameraActive = false;
@@ -368,37 +365,6 @@ window.__pendingProductImageStoragePath = null;
       window.escapeHTML = escapeHTML;
       window.guardOnce = guardOnce;
 
-      // Called by the Supabase-first owner setup without a page reload.
-      // Rehydrates the in-memory Core DB and switches from Setup -> Login safely.
-      window.finishFirstTimeSetupInMemory = async function(accountId, ownerEmail = '') {
-        const id = String(accountId || ownerEmail || '').trim().toLowerCase();
-        if (!id) throw new Error('ไม่พบบัญชีเจ้าของร้านหลังสร้างร้าน');
-        const raw = await localforage.getItem(getAccountDbKey(id));
-        if (!raw) throw new Error('ไม่พบข้อมูลบัญชีที่เพิ่งสร้างในเครื่อง');
-        db = { ...DB_DEFAULT, ...raw };
-        db.settings = { ...DB_DEFAULT.settings, ...(raw.settings || {}) };
-        db.counters = { ...DB_DEFAULT.counters, ...(raw.counters || {}) };
-        window.db = db;
-        currentUserId = null;
-        currentUserName = '';
-        const setupScreen = document.getElementById('first-time-setup-screen');
-        const lockScreen = document.getElementById('lock-screen');
-        const splash = document.getElementById('sync-splash-screen');
-        if (setupScreen) {
-          setupScreen.classList.add('hidden');
-          setupScreen.classList.remove('flex');
-        }
-        if (splash) splash.remove();
-        if (lockScreen) {
-          lockScreen.style.display = 'flex';
-          lockScreen.style.opacity = '1';
-        }
-        const loginId = document.getElementById('login-user-id');
-        if (loginId) loginId.value = ownerEmail || id;
-        const loginPw = document.getElementById('login-user-password');
-        if (loginPw) loginPw.value = '';
-      };
-
       // ==========================================
       // DATABASE INITIALIZATION & MIGRATION
       // ==========================================
@@ -407,17 +373,15 @@ window.__pendingProductImageStoragePath = null;
           // บังคับตั้งค่า Supabase ของตัวเองก่อนใช้งานครั้งแรกทุกเครื่อง — ไฟล์นี้ไม่มีฐานข้อมูล
           // เริ่มต้นแนบมาให้ในตัวไฟล์เลย (ตั้งใจ ไม่ใช่บั๊ก) เพื่อไม่ให้ใครก็ตามที่นำไฟล์นี้ไปใช้
           // ต่อเข้าฐานข้อมูลเดียวกันโดยไม่รู้ตัว ต้องกรอก Project URL + anon key ของตัวเองก่อนเสมอ
-          const hasSupabaseConfig = getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey();
-          const hasLocalAccount = !!(localStorage.getItem('POS_ACCOUNT_ID') || await localforage.getItem('POS_ACCOUNT_ID'));
-          // บัญชีผู้ใช้ต้องมีได้โดยไม่ต้องมีฐานข้อมูล เพื่อให้ทดสอบโปรแกรมก่อนเชื่อม Supabase จริง
-          if (!hasLocalAccount) {
+          const hasSupabaseConfig = !!(getConfiguredSupabaseUrl() && getConfiguredSupabaseAnonKey());
+          if (!hasSupabaseConfig) {
             document.getElementById('lock-screen').style.display = 'none';
             const setupScreen = document.getElementById('first-time-setup-screen');
             setupScreen.classList.remove('hidden');
             setupScreen.classList.add('flex');
             const splash = document.getElementById('sync-splash-screen');
             if (splash) splash.remove();
-            return; // หยุดตรงนี้ก่อน — ที่เหลือจะเริ่มทำงานหลังกด "บันทึกและเริ่มใช้งาน" แล้วโหลดหน้าใหม่
+            return;
           }
 
           // HTTPS Warn Checking
@@ -427,7 +391,7 @@ window.__pendingProductImageStoragePath = null;
           }
 
           let savedId = await localforage.getItem('POS_DEVICE_ID');
-          if (!savedId) { savedId = 'T-' + crypto.randomUUID().slice(0, 8).toUpperCase(); await localforage.setItem('POS_DEVICE_ID', savedId); }
+          if (!savedId) { savedId = 'T' + Math.floor(Math.random() * 90 + 10); await localforage.setItem('POS_DEVICE_ID', savedId); }
           const badgeEl = document.getElementById('device-id-badge');
           if (badgeEl) badgeEl.innerText = "DEVICE: " + savedId;
 
@@ -440,7 +404,15 @@ window.__pendingProductImageStoragePath = null;
             db.counters = { ...DB_DEFAULT.counters, ...(raw.counters || {}) };
             window.db = db;
           }
-          if (typeof window.ensureCostSchema === 'function') window.ensureCostSchema();
+
+          if (typeof window.restoreSupabaseSession === 'function') {
+            const restored = await window.restoreSupabaseSession();
+            if (restored) {
+              const splash = document.getElementById('sync-splash-screen');
+              if (splash) splash.remove();
+              return;
+            }
+          }
 
           // ถ้ามีชื่อร้านที่กรอกไว้ตอนหน้าตั้งค่าเริ่มต้น (first-time-setup-screen) ให้เอามาใช้
           const pendingStoreName = localStorage.getItem('PENDING_STORE_NAME');
@@ -563,16 +535,6 @@ window.__pendingProductImageStoragePath = null;
         });
       }
       window.persist = persist;
-
-      // Safe reset helper used by the admin danger-zone actions.  Keeping the
-      // canonical default schema here prevents reset code in another module
-      // from drifting away from the real database schema.
-      window.resetDatabaseToDefaults = function () {
-        db = JSON.parse(JSON.stringify(DB_DEFAULT));
-        window.db = db;
-        invalidateBarcodeIndex();
-        return db;
-      };
 
       function renderAll() {
         const storeTitle = document.getElementById('store-name-title');
@@ -714,120 +676,6 @@ window.__pendingProductImageStoragePath = null;
       // ==========================================
       // PIN LOCK & SECURE MANAGER AUTHENTICATION
       // ==========================================
-      // Manager-session helpers were missing from the previous build.  Keep them
-      // in core so every module can safely call the same functions.
-      let managerSessionUntil = 0;
-      let managerAuthCallback = null;
-
-      function ensureSecurityState() {
-        db.security = db.security || {};
-        if (typeof db.security.mgrFailCount !== 'number') db.security.mgrFailCount = 0;
-        if (typeof db.security.mgrLockUntil !== 'number') db.security.mgrLockUntil = 0;
-      }
-
-      function updateManagerSessionBadge() {
-        const badge = document.getElementById('mgr-session-badge');
-        const countdown = document.getElementById('mgr-session-countdown');
-        if (!badge || !countdown) return;
-        const remaining = Math.max(0, managerSessionUntil - Date.now());
-        if (!managerSessionUntil || remaining <= 0) {
-          badge.classList.add('hidden');
-          countdown.textContent = '--:--';
-          if (managerSessionUntil) managerSessionUntil = 0;
-          return;
-        }
-        const totalSeconds = Math.ceil(remaining / 1000);
-        const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
-        const ss = String(totalSeconds % 60).padStart(2, '0');
-        countdown.textContent = `${mm}:${ss}`;
-        badge.classList.remove('hidden');
-      }
-
-      window.lockManagerSessionNow = function() {
-        managerSessionUntil = 0;
-        managerAuthCallback = null;
-        const badge = document.getElementById('mgr-session-badge');
-        if (badge) badge.classList.add('hidden');
-        const modal = document.getElementById('modal-manager-pin');
-        if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
-      };
-
-      window.closeManagerPinModal = function() {
-        managerAuthCallback = null;
-        const modal = document.getElementById('modal-manager-pin');
-        if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
-        const input = document.getElementById('mgr-pin-input');
-        const err = document.getElementById('mgr-pin-error');
-        if (input) input.value = '';
-        if (err) { err.textContent = ''; err.classList.add('hidden'); }
-      };
-
-      window.openManagerPinModal = function(onSuccess) {
-        ensureSecurityState();
-        // No manager PIN configured: do not block normal operation.
-        if (!db.pinHash) {
-          if (typeof onSuccess === 'function') onSuccess();
-          return;
-        }
-        // Re-use a still-valid manager session for convenience.
-        if (managerSessionUntil > Date.now()) {
-          if (typeof onSuccess === 'function') onSuccess();
-          updateManagerSessionBadge();
-          return;
-        }
-        if (isMgrPinLocked()) {
-          const modal = document.getElementById('modal-manager-pin');
-          if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
-          startMgrLockCountdown();
-          return;
-        }
-        managerAuthCallback = typeof onSuccess === 'function' ? onSuccess : null;
-        const modal = document.getElementById('modal-manager-pin');
-        const input = document.getElementById('mgr-pin-input');
-        const err = document.getElementById('mgr-pin-error');
-        if (err) { err.textContent = ''; err.classList.add('hidden'); }
-        if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
-        if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
-      };
-
-      window.submitManagerPin = async function() {
-        ensureSecurityState();
-        if (isMgrPinLocked()) { startMgrLockCountdown(); return; }
-        const input = document.getElementById('mgr-pin-input');
-        const err = document.getElementById('mgr-pin-error');
-        const pin = String(input?.value || '').trim();
-        if (!/^\d{4}$/.test(pin)) {
-          if (err) { err.textContent = 'กรุณากรอก PIN 4 หลัก'; err.classList.remove('hidden'); }
-          return;
-        }
-        const currentHash = await hashPIN(pin, db.pinSalt || '');
-        const legacyHash = await hashPINLegacy(pin, db.pinSalt || '');
-        if (currentHash !== db.pinHash && legacyHash !== db.pinHash) {
-          db.security.mgrFailCount = (db.security.mgrFailCount || 0) + 1;
-          if (db.security.mgrFailCount >= PIN_MAX_ATTEMPTS) {
-            db.security.mgrLockUntil = Date.now() + PIN_LOCK_MS;
-            db.security.mgrFailCount = 0;
-            persist();
-            startMgrLockCountdown();
-          } else if (err) {
-            const left = PIN_MAX_ATTEMPTS - db.security.mgrFailCount;
-            err.textContent = `PIN ไม่ถูกต้อง เหลืออีก ${left} ครั้ง`;
-            err.classList.remove('hidden');
-          }
-          return;
-        }
-        db.security.mgrFailCount = 0;
-        db.security.mgrLockUntil = 0;
-        persist();
-        const minutes = Math.max(0, parseInt(db.settings?.mgrSessionMinutes, 10) || 0);
-        managerSessionUntil = Date.now() + (minutes > 0 ? minutes * 60 * 1000 : 0);
-        const callback = managerAuthCallback;
-        managerAuthCallback = null;
-        window.closeManagerPinModal();
-        if (minutes > 0) updateManagerSessionBadge();
-        if (typeof callback === 'function') callback();
-      };
-
       const PIN_MAX_ATTEMPTS = 5;
       const PIN_LOCK_MS = 30000;
       let mainLockTimerHandle = null;
@@ -896,104 +744,253 @@ window.__pendingProductImageStoragePath = null;
       }
 
       window.submitAccountLogin = async function() {
-        const idEl = document.getElementById('login-user-id');
-        const pwEl = document.getElementById('login-user-password');
+        const emailEl = document.getElementById('login-owner-email');
+        const pwEl = document.getElementById('login-owner-password');
         const errEl = document.getElementById('account-login-error-text');
         const lockEl = document.getElementById('account-login-lockout-text');
-        const email = (idEl?.value || '').trim().toLowerCase();
+        const email = (emailEl?.value || '').trim().toLowerCase();
         const password = pwEl?.value || '';
-
-        if (!email || !password) {
-          if (errEl) { errEl.textContent = 'กรุณากรอกอีเมลและรหัสผ่าน'; errEl.classList.remove('hidden'); }
-          return;
-        }
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          if (errEl) { errEl.textContent = 'รูปแบบอีเมลไม่ถูกต้อง'; errEl.classList.remove('hidden'); }
-          return;
-        }
-
+        if (!email || !password) return;
+        if (!/^\S+@\S+\.\S+$/.test(email)) { if(errEl){errEl.textContent='❌ กรุณากรอกอีเมลให้ถูกต้อง';errEl.classList.remove('hidden');} return; }
+        if (accountLoginLockUntil > Date.now()) { lockEl?.classList.remove('hidden'); return; }
         try {
-          if (typeof window.ensureSupabaseClientReady !== 'function') throw new Error('Supabase client ยังไม่พร้อม');
-          const ready = await window.ensureSupabaseClientReady({ requireConfig: true, accountId: email });
-          if (!ready) throw new Error('ยังไม่ได้ตั้งค่า Supabase Project');
-
-          const client = getSupabaseClient();
-          if (!client) throw new Error('Supabase client ไม่พร้อมใช้งาน');
-
-          const result = await client.auth.signInWithPassword({ email, password });
-          if (result.error || !result.data?.user) throw new Error(result.error?.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-
-          localStorage.setItem('POS_ACCOUNT_ID', email);
-          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL::' + email, email);
-          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL', email);
-          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID::' + email, result.data.user.id);
-          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID', result.data.user.id);
-          setConfiguredSupabase(getConfiguredSupabaseUrl(email), getConfiguredSupabaseAnonKey(email), email);
-
-          // If this is a verified owner whose store was not created yet, finish it now.
-          const { data: existingStore } = await client.rpc('current_store_id');
-          if (!existingStore) {
-            const pendingName = String(localStorage.getItem('PENDING_STORE_NAME') || '').trim();
-            if (pendingName) {
-              const { data: storeId, error } = await client.rpc('create_store', { p_name: pendingName, p_code: null });
-              if (error) throw new Error('สร้างร้านหลังยืนยันอีเมลไม่สำเร็จ: ' + error.message);
-              localStorage.setItem('POS_STORE_ID', storeId);
-              localStorage.removeItem('PENDING_STORE_NAME');
-              localStorage.removeItem('PENDING_OWNER_EMAIL');
-            }
-          } else {
-            localStorage.setItem('POS_STORE_ID', existingStore);
-          }
-
-          let accountDb = await localforage.getItem(getAccountDbKey(email));
-          if (!accountDb) {
-            accountDb = JSON.parse(JSON.stringify(DB_DEFAULT));
-            accountDb.storeName = localStorage.getItem('PENDING_STORE_NAME') || '';
-            accountDb.storeId = localStorage.getItem('POS_STORE_ID') || existingStore || '';
-            accountDb.users = [];
-          }
-          accountDb.users = accountDb.users || [];
-          let user = accountDb.users.find(u => String(u.email || '').toLowerCase() === email);
-          if (!user) {
-            user = {
-              id: email,
-              authUserId: result.data.user.id,
-              name: result.data.user.user_metadata?.full_name || email,
-              role: 'owner',
-              email,
-              createdAt: new Date().toISOString()
-            };
-            accountDb.users.push(user);
-          }
-          accountDb.storeId = localStorage.getItem('POS_STORE_ID') || accountDb.storeId || '';
-          await localforage.setItem(getAccountDbKey(email), accountDb);
-          db = { ...DB_DEFAULT, ...accountDb };
-          window.db = db;
-
-          if (typeof window.refreshStoreContext === 'function') await window.refreshStoreContext();
-
-          accountLoginFailCount = 0;
-          currentUserId = user.id;
-          currentUserName = user.name;
-          if (pwEl) pwEl.value = '';
-
-          const lockScreen = document.getElementById('lock-screen');
-          if (lockScreen) {
-            lockScreen.style.opacity = '0';
-            setTimeout(() => { lockScreen.style.display = 'none'; lockScreen.style.opacity = '1'; }, 250);
-          }
-          showToast('เข้าสู่ระบบสำเร็จ: ' + user.name);
-        } catch (e) {
-          console.error('Cloud login failed:', e);
-          if (errEl) {
-            errEl.textContent = '❌ เข้าสู่ระบบไม่สำเร็จ: ' + (e?.message || e);
-            errEl.classList.remove('hidden');
-          }
-          if (pwEl) pwEl.value = '';
+          const url=getConfiguredSupabaseUrl(), key=getConfiguredSupabaseAnonKey();
+          if(!url||!key) throw new Error('ยังไม่ได้ตั้งค่า Supabase');
+          const client=getSupabaseClient();
+          const {data,error}=await client.auth.signInWithPassword({email,password});
+          if(error||!data?.session) throw new Error(error?.message||'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+          localStorage.setItem('POS_ACCOUNT_ID',data.user.id.toLowerCase());
+          localStorage.setItem('POS_SUPABASE_AUTH_EMAIL',email);
+          localStorage.setItem('POS_SUPABASE_AUTH_USER_ID',data.user.id);
+          setConfiguredSupabase(url,key,data.user.id.toLowerCase());
+          const ok=await window.restoreSupabaseSession(true);
+          if(!ok) throw new Error('เข้าสู่ระบบสำเร็จ แต่ยังไม่พบข้อมูลร้านของบัญชีนี้');
+          accountLoginFailCount=0;
+          if(pwEl) pwEl.value='';
+          showToast('เข้าสู่ระบบสำเร็จ');
+        } catch(e) {
+          console.error('Supabase login failed:',e);
+          accountLoginFailCount++;
+          if(accountLoginFailCount>=5){accountLoginLockUntil=Date.now()+30000;accountLoginFailCount=0;lockEl?.classList.remove('hidden');setTimeout(()=>lockEl?.classList.add('hidden'),31000);}
+          else if(errEl){errEl.textContent='❌ '+(e?.message||'อีเมลหรือรหัสผ่านไม่ถูกต้อง');errEl.classList.remove('hidden');setTimeout(()=>errEl.classList.add('hidden'),3000);}
+          if(pwEl) pwEl.value='';
         }
       };
 
-// ==========================================
+      window.lockCurrentAccount = async function() {
+        try { if (typeof getSupabaseClient === 'function' && _supabaseClient) await _supabaseClient.auth.signOut(); } catch (e) { console.warn('Supabase signOut:', e); }
+        _supabaseClient = null;
+        localStorage.removeItem('POS_SUPABASE_AUTH_USER_ID');
+        localStorage.removeItem('POS_SUPABASE_AUTH_EMAIL');
+        currentUserId = null; currentUserName = '';
+        const lockScreen = document.getElementById('lock-screen');
+        if (lockScreen) { lockScreen.style.display='flex'; lockScreen.style.opacity='1'; }
+        const emailEl=document.getElementById('login-owner-email'); if(emailEl) emailEl.value='';
+        const pwEl=document.getElementById('login-owner-password'); if(pwEl) pwEl.value='';
+        showToast('ออกจากระบบแล้ว');
+      };
+
+      window.pressPin = async function(num) {
+        if (isMainPinLocked()) return;
+        if(tempPin.length < 4) {
+          tempPin += num.toString();
+          updatePinDisplay();
+          if(tempPin.length === 4) await verifyPin();
+        }
+      };
+      window.clearPin = function() {
+        tempPin = "";
+        updatePinDisplay();
+        const errText = document.getElementById('pin-error-text');
+        if (errText) errText.classList.add('hidden');
+      };
+      function updatePinDisplay() {
+        const displayArea = document.getElementById('pin-display-area');
+        if (!displayArea) return;
+        const dots = displayArea.children;
+        for(let i=0; i<4; i++) {
+          if (dots[i]) {
+            if(i < tempPin.length) dots[i].classList.add('pin-dot-active');
+            else dots[i].classList.remove('pin-dot-active');
+          }
+        }
+      }
+      async function verifyPin() {
+        if (!db.pinHash) {
+          const lockScreen = document.getElementById('lock-screen');
+          if (lockScreen) lockScreen.style.display = 'none';
+          tempPin = ""; updatePinDisplay();
+          return;
+        }
+        const currentHash = await hashPIN(tempPin, db.pinSalt);
+        if(currentHash === db.pinHash) {
+          db.security.lockFailCount = 0;
+          db.security.lockUntil = 0;
+          persist();
+          const lockScreen = document.getElementById('lock-screen');
+          if (lockScreen) {
+            lockScreen.style.opacity = '0';
+            setTimeout(() => { lockScreen.style.display = 'none'; tempPin = ""; updatePinDisplay(); }, 500);
+          }
+        } else {
+          db.security.lockFailCount = (db.security.lockFailCount || 0) + 1;
+          tempPin = ""; updatePinDisplay();
+          playSound('error');
+          if (db.security.lockFailCount >= PIN_MAX_ATTEMPTS) {
+            db.security.lockUntil = Date.now() + PIN_LOCK_MS;
+            db.security.lockFailCount = 0;
+            persist();
+            startMainLockCountdown();
+          } else {
+            persist();
+            const errText = document.getElementById('pin-error-text');
+            if (errText) {
+              errText.classList.remove('hidden');
+              setTimeout(() => { errText.classList.add('hidden'); }, 1000);
+            }
+          }
+        }
+      }
+      
+      let mgrActionCallback = null;
+      let managerSessionExpiresAt = 0;
+
+      function isManagerSessionActive() {
+        return managerSessionExpiresAt > Date.now();
+      }
+
+      window.lockManagerSessionNow = function() {
+        managerSessionExpiresAt = 0;
+        updateManagerSessionBadge();
+        showToast("🔒 ล็อกโหมดผู้จัดการแล้ว");
+      };
+
+      function startManagerSession() {
+        const minutes = (db.settings && db.settings.mgrSessionMinutes) || 0;
+        if (minutes > 0) {
+          managerSessionExpiresAt = Date.now() + minutes * 60 * 1000;
+        } else {
+          managerSessionExpiresAt = 0;
+        }
+        updateManagerSessionBadge();
+      }
+
+      function updateManagerSessionBadge() {
+        const badge = document.getElementById('mgr-session-badge');
+        const countdownEl = document.getElementById('mgr-session-countdown');
+        if (!badge || !countdownEl) return;
+        if (isManagerSessionActive()) {
+          const remainMs = managerSessionExpiresAt - Date.now();
+          const mm = Math.floor(remainMs / 60000);
+          const ss = Math.floor((remainMs % 60000) / 1000);
+          countdownEl.innerText = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+          badge.classList.remove('hidden');
+        } else {
+          if (managerSessionExpiresAt !== 0) managerSessionExpiresAt = 0;
+          badge.classList.add('hidden');
+        }
+      }
+
+      window.openManagerPinModal = function(callback) {
+        if (!db.pinHash) {
+          if (callback) callback();
+          showToast("💡 ยังไม่ได้ตั้งรหัส PIN ผู้จัดการ — แนะนำให้ตั้งค่าที่ ⚙️ ตั้งค่า > เปลี่ยนรหัส PIN");
+          return;
+        }
+        if (isManagerSessionActive()) {
+          if (callback) callback();
+          return;
+        }
+        mgrActionCallback = callback;
+        const input = document.getElementById('mgr-pin-input');
+        const errText = document.getElementById('mgr-pin-error');
+        if (input) input.value = "";
+        if (errText) errText.classList.add('hidden');
+
+        const userSelect = document.getElementById('mgr-user-select');
+        if (userSelect) {
+          if (db.users && db.users.length > 0) {
+            userSelect.innerHTML = `<option value="">-- เจ้าของร้าน (PIN หลัก) --</option>` +
+              db.users.map(u => `<option value="${escapeHTML(u.id)}">${escapeHTML(u.name)}</option>`).join('');
+            userSelect.classList.remove('hidden');
+          } else {
+            userSelect.classList.add('hidden');
+          }
+        }
+
+        const modal = document.getElementById('modal-manager-pin');
+        if (modal) {
+          modal.classList.remove('hidden');
+          modal.classList.add('flex');
+        }
+        if (isMgrPinLocked()) {
+          startMgrLockCountdown();
+        } else {
+          const btn = document.getElementById('mgr-pin-submit-btn');
+          if (btn && input) {
+            btn.disabled = false; btn.classList.remove('opacity-40', 'pointer-events-none');
+            input.disabled = false;
+          }
+        }
+        setTimeout(() => {
+          const inp = document.getElementById('mgr-pin-input');
+          if (inp) inp.focus();
+        }, 100);
+      };
+      
+      window.submitManagerPin = async function() {
+        if (isMgrPinLocked()) return;
+        const val = document.getElementById('mgr-pin-input').value;
+        const userSelect = document.getElementById('mgr-user-select');
+        const selectedUserId = userSelect ? userSelect.value : '';
+        const selectedUser = selectedUserId ? db.users.find(u => u.id === selectedUserId) : null;
+
+        const targetHash = selectedUser ? selectedUser.pinHash : db.pinHash;
+        const targetSalt = selectedUser ? selectedUser.pinSalt : db.pinSalt;
+        const inputHash = await hashPIN(val, targetSalt);
+
+        if(inputHash === targetHash) {
+          db.security.mgrFailCount = 0;
+          db.security.mgrLockUntil = 0;
+          currentUserId = selectedUser ? selectedUser.id : null;
+          currentUserName = selectedUser ? selectedUser.name : 'เจ้าของร้าน';
+          persist();
+          startManagerSession();
+          const callbackToRun = mgrActionCallback;
+          window.closeManagerPinModal();
+          if(callbackToRun) {
+            callbackToRun();
+          }
+        } else {
+          db.security.mgrFailCount = (db.security.mgrFailCount || 0) + 1;
+          const input = document.getElementById('mgr-pin-input');
+          const errText = document.getElementById('mgr-pin-error');
+          if (input) input.value = "";
+          if (db.security.mgrFailCount >= PIN_MAX_ATTEMPTS) {
+            db.security.mgrLockUntil = Date.now() + PIN_LOCK_MS;
+            db.security.mgrFailCount = 0;
+            persist();
+            startMgrLockCountdown();
+          } else {
+            persist();
+            if (errText) {
+              errText.innerText = "PIN ไม่ถูกต้อง!";
+              errText.classList.remove('hidden');
+            }
+          }
+        }
+      };
+      window.closeManagerPinModal = function() {
+        const modal = document.getElementById('modal-manager-pin');
+        if (modal) {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+        }
+        clearInterval(mgrLockTimerHandle);
+        mgrActionCallback = null;
+      };
+
+      // ==========================================
       // SALE HOME & CATEGORIES GRID
       // ==========================================
       window.renderBestsellerRow = function() {
@@ -1022,7 +1019,7 @@ window.__pendingProductImageStoragePath = null;
             ? `window.onGroupClick('${escapeHTML(p.groupName)}')`
             : `window.onProductClick('${escapeHTML(p.id)}')`;
           const thumb = p.imageUrl
-            ? `<img loading="lazy" decoding="async" src="${escapeHTML(p.imageUrl)}" class="w-full h-14 object-cover rounded-lg mb-1">`
+            ? `<img src="${escapeHTML(p.imageUrl)}" class="w-full h-14 object-cover rounded-lg mb-1">`
             : `<div class="w-full h-14 bg-slate-100 rounded-lg mb-1 flex items-center justify-center text-xl">${escapeHTML(p.image || '📦')}</div>`;
           return `
             <div onclick="${clickAttr}" class="flex-none w-20 bg-white border rounded-xl p-1.5 shadow-sm cursor-pointer active:scale-95 transition">
@@ -1046,7 +1043,7 @@ window.__pendingProductImageStoragePath = null;
             if (repProduct) {
               return `
                 <div onclick="window.selectCategory('${escapeHTML(c.name)}')" class="p-card relative overflow-hidden h-32 shadow-sm cursor-pointer">
-                  <img loading="lazy" decoding="async" src="${escapeHTML(repProduct.imageUrl)}" class="absolute inset-0 w-full h-full object-cover block">
+                  <img src="${escapeHTML(repProduct.imageUrl)}" class="absolute inset-0 w-full h-full object-cover block">
                   <div class="absolute inset-x-0 bottom-0 px-2 pt-6 pb-1.5" style="background:linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0));">
                     <h4 class="font-extrabold text-[11px] text-white truncate w-full">${escapeHTML(c.name)}</h4>
                   </div>
@@ -1182,20 +1179,8 @@ window.__pendingProductImageStoragePath = null;
         renderProductGrid(matches);
       };
 
-      window.handleProductCardImgError = async function(imgEl) {
+      window.handleProductCardImgError = function(imgEl) {
         const emoji = imgEl.dataset.fallbackEmoji || '📦';
-        const pid = imgEl.dataset.pid || '';
-        if (pid && !imgEl.dataset.retrying) {
-          imgEl.dataset.retrying = '1';
-          const ok = typeof window.refreshProductImageUrl === 'function'
-            ? await window.refreshProductImageUrl(pid)
-            : false;
-          const fresh = db?.products?.[pid]?.imageUrl;
-          if (ok && fresh) {
-            imgEl.src = fresh;
-            return;
-          }
-        }
         const fallback = document.createElement('div');
         fallback.className = 'absolute inset-0 flex items-center justify-center text-4xl bg-slate-100';
         fallback.textContent = emoji;
@@ -1253,7 +1238,7 @@ window.__pendingProductImageStoragePath = null;
             if (hasPhoto) {
               return `
                 <div onclick="${clickAttr}" class="p-card relative overflow-hidden h-48 shadow-xs cursor-pointer ring-2 ring-amber-300">
-                  <img loading="lazy" decoding="async" src="${escapeHTML(g.imageUrl)}" data-pid="${escapeHTML((g.members.find(m => m.imageUrl)?.id || g.members[0]?.id || ''))}" data-fallback-emoji="${escapeHTML(g.image || '📦')}" onerror="window.handleProductCardImgError(this)" class="absolute inset-0 w-full h-full object-cover block">
+                  <img src="${escapeHTML(g.imageUrl)}" data-fallback-emoji="${escapeHTML(g.image || '📦')}" onerror="window.handleProductCardImgError(this)" class="absolute inset-0 w-full h-full object-cover block">
                   <span class="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow">🔗 ${g.members.length} รายการ</span>
                   <div class="absolute inset-x-0 bottom-0 px-2 pt-6 pb-1.5" style="background:linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0));">
                     <p class="font-extrabold text-[11px] text-white leading-tight line-clamp-2">${escapeHTML(g.groupKey)}</p>
@@ -1279,7 +1264,7 @@ window.__pendingProductImageStoragePath = null;
           if (hasPhoto) {
             return `
               <div onclick="window.onProductClick('${escapeHTML(p.id)}')" class="p-card relative overflow-hidden h-48 shadow-xs cursor-pointer">
-                <img loading="lazy" decoding="async" src="${escapeHTML(p.imageUrl)}" data-pid="${escapeHTML(p.id)}" data-fallback-emoji="${escapeHTML(p.image || '📦')}" onerror="window.handleProductCardImgError(this)" class="absolute inset-0 w-full h-full object-cover block">
+                <img src="${escapeHTML(p.imageUrl)}" data-fallback-emoji="${escapeHTML(p.image || '📦')}" onerror="window.handleProductCardImgError(this)" class="absolute inset-0 w-full h-full object-cover block">
                 <div class="absolute inset-x-0 bottom-0 px-2 pt-6 pb-1.5" style="background:linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0));">
                   <p class="font-extrabold text-[11px] text-white leading-tight line-clamp-2">${escapeHTML(p.name)}</p>
                   <p class="text-[10px] text-emerald-300 font-bold mt-0.5">เริ่มต้น: ${formatMoney(p.variants[0]?.price || 0)}</p>
@@ -1768,7 +1753,7 @@ window.__pendingProductImageStoragePath = null;
 
         const success = await window.runAtomicTransaction('PROCESS_SALE', async () => {
           const total = cart.reduce((sum, item) => roundAmt(sum + (item.qty * item.price)), 0);
-          const totalCost = roundAmt(cart.reduce((sum, item) => roundAmt(sum + (item.qty * (parseFloat(item.cost) || 0))), 0)); // replaced by lockedTotalCost below
+          const totalCost = roundAmt(cart.reduce((sum, item) => roundAmt(sum + (item.qty * (parseFloat(item.cost) || 0))), 0));
           const custSelect = document.getElementById('pay-customer-select');
           const cid = custSelect ? custSelect.value : 'GENERAL';
           let received = total;
@@ -1783,67 +1768,6 @@ window.__pendingProductImageStoragePath = null;
             throw new Error("กรุณาระบุชื่อลูกค้าเพื่อทำการบันทึกหนี้ค้างชำระ");
           }
 
-          // Server-side transaction is the online source of truth. Offline mode keeps the
-          // local rollback engine and queues the state for sync later.
-          db.pendingCheckout = db.pendingCheckout || { idempotencyKey: 'SALE-' + crypto.randomUUID(), billId: getDailyBillId(), createdAt: Date.now() };
-          const idempotencyKey = db.pendingCheckout.idempotencyKey;
-          const billId = db.pendingCheckout.billId;
-          const onlineSession = typeof window.getSupabaseClient === 'function' ? null : null;
-          let hasOnlineAuth = false;
-          try {
-            if (navigator.onLine && typeof getSupabaseClient === 'function') {
-              const sess = (await getSupabaseClient().auth.getSession()).data?.session;
-              hasOnlineAuth = !!sess && typeof window.processSaleAtomicOnline === 'function';
-            }
-          } catch (_) { hasOnlineAuth = false; }
-
-          if (hasOnlineAuth) {
-            const serverResult = await window.processSaleAtomicOnline({
-              idempotency_key: idempotencyKey,
-              bill_id: billId,
-              payment_method: activePayMethod,
-              customer_id: cid,
-              received,
-              change: activePayMethod === 'CASH' ? roundAmt(received - total) : 0,
-              actor_name: currentUserName || '',
-              items: cart.map(i => ({ product_id:i.id, variant_id:i.variantId, name:i.name, qty:i.qty, multiplier:i.multiplier, price:i.price, fractionId:i.fractionId || null }))
-            });
-            const saleItems = (serverResult.items || []).map(si => ({
-              id: cart.find(i => i.id===si.productId && i.variantId===si.variantId)?.id || si.productId,
-              productId: si.productId,
-              variantId: si.variantId,
-              name: si.name,
-              qty: si.qty,
-              multiplier: si.multiplier,
-              price: si.price,
-              fractionId: si.fractionId || null,
-              costAtSale: si.costAtSale,
-              profitAtSale: si.profitAtSale,
-              refundedQty: 0
-            }));
-            const bill = { id:serverResult.bill_id, time:Date.now(), idempotencyKey:serverResult.idempotency_key,
-              items:saleItems, total:roundAmt(serverResult.total), totalCost:roundAmt(serverResult.total_cost),
-              profitAtSale:roundAmt(serverResult.profit_at_sale), method:activePayMethod, customerId:cid,
-              received:roundAmt(serverResult.received), change:roundAmt(serverResult.change), isRefunded:false, refundAmount:0, refundCost:0 };
-            // Apply the already-committed server result to the local cache; no second sale is created remotely.
-            saleItems.forEach(item => {
-              const v = db.products[item.productId]?.variants?.find(x => x.id===item.variantId);
-              if (v) v.stock = roundStock(v.stock - (item.qty * item.multiplier));
-              if (typeof window.recordStockMovement === 'function') window.recordStockMovement({ productId:item.productId, variantId:item.variantId, qty:-roundStock(item.qty*item.multiplier), unitCost:item.costAtSale, type:'SALE', refId:bill.id, note:'ยืนยันการขายจากฐานข้อมูลกลาง' });
-            });
-            db.bills.push(bill);
-            if (Array.isArray(db.saleTransactions)) db.saleTransactions.push({ id:idempotencyKey,billId:bill.id,time:new Date().toISOString(),serverCommitted:true });
-            if (activePayMethod === 'CASH' && db.currentShift) db.currentShift.cashOnHand = roundAmt(db.currentShift.cashOnHand + total);
-            if (activePayMethod === 'TRANSFER' && db.currentShift) db.currentShift.transferSales = roundAmt(db.currentShift.transferSales + total);
-            if (activePayMethod === 'CREDIT' && db.customers[cid]) db.customers[cid].debt = roundAmt((db.customers[cid].debt||0) + total);
-            if (activePayMethod !== 'CREDIT') db.cashLedger.push({ id:'TX-'+generateID(), date:new Date().toISOString().slice(0,10), description:`รับเงินขายหน้าร้าน บิลเลขที่ ${bill.id}`, income:total, expense:0, type:'income-sales', refId:bill.id });
-            persist();
-            cart=[]; window.cart=cart; if (typeof window.clearCartDraft==='function') window.clearCartDraft(); updateCartUI(); closeModal('modal-payment');
-            selectedBillForReceipt=bill; renderReceiptContent(bill); const modalReceipt=document.getElementById('modal-receipt'); if(modalReceipt){modalReceipt.classList.remove('hidden');modalReceipt.classList.add('flex');}
-            showToast('บันทึกการขายสำเร็จ (ยืนยันจากฐานข้อมูลกลาง)'); playSound('sale');
-            return true;
-          }
-
           const requiredByVariant = {};
           cart.forEach(item => {
             requiredByVariant[item.variantId] = roundStock((requiredByVariant[item.variantId] || 0) + (item.qty * item.multiplier));
@@ -1856,27 +1780,13 @@ window.__pendingProductImageStoragePath = null;
             }
           }
 
-          // Immutable transaction identity prevents accidental duplicate checkout on retries.
-          const saleItems = cart.map(i => {
-            const liveVariant = db.products[i.id]?.variants?.find(x => x.id === i.variantId);
-            const baseCurrentCost = typeof window.getCurrentCost === 'function'
-              ? window.getCurrentCost(i.id, i.variantId)
-              : roundAmt(liveVariant?.currentCost ?? liveVariant?.cost ?? i.cost ?? 0);
-            // Snapshot the cost at the exact moment of checkout. Once saved, this value is immutable.
-            const costAtSale = roundAmt(i.fractionId ? baseCurrentCost * (parseFloat(i.multiplier) || 1) : baseCurrentCost);
-            const lineTotal = roundAmt(i.qty * i.price);
-            const lineCost = roundAmt(i.qty * costAtSale);
-            return { ...i, costAtSale, profitAtSale: roundAmt(lineTotal - lineCost), refundedQty: 0 };
-          });
-          const lockedTotalCost = roundAmt(saleItems.reduce((sum, item) => sum + (item.qty * item.costAtSale), 0));
+          const billId = getDailyBillId();
           const bill = {
             id: billId,
             time: Date.now(),
-            idempotencyKey,
-            items: saleItems,
+            items: cart.map(i => ({ ...i, refundedQty: 0 })),
             total: total,
-            totalCost: lockedTotalCost,
-            profitAtSale: roundAmt(total - lockedTotalCost),
+            totalCost: totalCost,
             method: activePayMethod,
             customerId: cid,
             received,
@@ -1887,15 +1797,10 @@ window.__pendingProductImageStoragePath = null;
           };
 
           db.bills.push(bill);
-          if (Array.isArray(db.saleTransactions)) db.saleTransactions.push({ id: idempotencyKey, billId, time: new Date().toISOString() });
-          delete db.pendingCheckout;
           
-          saleItems.forEach(item => {
+          cart.forEach(item => {
             const v = db.products[item.id].variants.find(x => x.id === item.variantId);
             v.stock = roundStock(v.stock - (item.qty * item.multiplier));
-            if (typeof window.recordStockMovement === 'function') {
-              window.recordStockMovement({ productId: item.id, variantId: item.variantId, qty: -roundStock(item.qty * item.multiplier), unitCost: item.costAtSale, type: 'SALE', refId: billId });
-            }
           });
 
           if (activePayMethod === 'CASH' && db.currentShift) db.currentShift.cashOnHand = roundAmt(db.currentShift.cashOnHand + total);
